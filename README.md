@@ -44,3 +44,17 @@ They work as a pair but don't require each other: the skill can be triggered man
 
 - The hook's `THRESHOLD_TOKENS` (default 120,000) is a fixed cutoff, not model-aware. Adjust it in the script if you're on a smaller context window.
 - The skill is chat-output only by design — it never writes files or updates memory, so it's safe to run repeatedly.
+
+## Between-task awareness in plan-driven workflows
+
+The hook only fires on `UserPromptSubmit`, and only checks usage at that single moment — it never re-fires mid-turn. In an auto/subagent-orchestrated workflow (subagents on a cheaper model, reviewed by a stronger one, no per-task human approval), there may be exactly one `UserPromptSubmit` for an entire multi-task stretch: whatever message kicked it off (e.g. "implement the rest of the plan").
+
+Subagents run in their own isolated context window — only their returned output feeds back into the main/orchestrator session, which is what actually accumulates tokens over a long run. (Confirmed via the hook's own debug dump at `~/.claude/hooks/context-debug.json`, which only ever contains a literal typed `prompt`, never a synthetic subagent event.)
+
+Because the hook's warning is injected as a standing instruction ("if you're over the threshold, flag it before continuing") that persists for the rest of that turn, the model can end up acting on it several tool calls and tasks later — at whatever point looks like a sensible pause — rather than the instant it was injected. That's the model choosing a moment within one firing, not the hook firing again.
+
+Caveat: `context-debug.json` is overwritten on every firing, so this is inferred from the hook's own logic, not confirmed against a live multi-task run. To pin down the exact trigger next time, copy or timestamp that file each time it fires and compare against the transcript.
+
+## Credits
+
+`skills/session-handoff/SKILL.md` credit: [Nate Herk](https://www.linkedin.com/in/nateherkelman/).
