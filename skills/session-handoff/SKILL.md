@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Use when the user says "session handoff", "wrap up session", "hand off", "handoff summary", or wants a structured end-of-session summary before clearing context. Produces a chat-only handoff covering decisions, shipped changes, key files, running state, verification steps, deferrals, and open questions so a fresh agent can continue seamlessly.
+description: Two directions, same skill. WRITING — use when the user says "session handoff", "wrap up session", "hand off", "handoff summary", or wants a structured end-of-session summary before clearing context; writes it to project memory and prints it, covering decisions, shipped changes, key files, running state, verification steps, deferrals, and open questions. READING — use when the user explicitly asks to resume: "resume", "resume from before", "resume from last session", "pick up where we left off", "continue from last time", "carry on from yesterday", "catch me up", "where did we leave off", "what was I working on", "load the last handoff", or a near-equivalent explicit request. Loads the stored handoff so a fresh agent continues seamlessly. Do NOT invoke the reading half merely because a request resembles earlier work in this repo — resuming requires the user to ask for it.
 ---
 
 # Session Handoff
@@ -11,7 +11,9 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
 
 ## When to invoke
 
-User says: "session handoff", "wrap up session", "hand off", "handoff summary", "let's wrap up", "summarize before I clear", or any near-equivalent. Also invoke proactively if the user says they're about to `/clear` without having run it yet.
+**To write a handoff** — user says: "session handoff", "wrap up session", "hand off", "handoff summary", "let's wrap up", "summarize before I clear", or any near-equivalent. Also invoke proactively if the user says they're about to `/clear` without having run it yet. Follow "How to produce the summary" below.
+
+**To read one** — user opens a session with "resume from last session", "resume from before", "pick up where we left off", "continue from last time", "what was I working on", or any near-equivalent. Skip straight to "Reading a handoff in a fresh session" below; do not write anything.
 
 **Automated trigger:** The `context-threshold-warn.py` hook (`~/.claude/hooks/`) alerts at 60% of the 200k model context window, prompting the user to run this skill.
 
@@ -26,7 +28,45 @@ User says: "session handoff", "wrap up session", "hand off", "handoff summary", 
    - Memory files written or updated (`C:\Users\david\.claude\projects\<project>\memory\`).
    - Unresolved questions — things you asked the user that never got a clear answer, or things the user asked that got deflected.
 3. **Do NOT audit the filesystem.** This is synthesis of what happened in THIS session. No `git log`, no broad `Glob` sweeps. If you didn't touch it this session, it doesn't belong here.
-4. **Produce the output in chat.** Do not write a file. Do not update memory. Chat-only.
+4. **Write it to project memory, then print it in chat.** See "Where the handoff goes" below.
+
+## Where the handoff goes
+
+The handoff is written into this repo's project memory directory — the same `.../projects/<repo-slug>/memory/` path given in your system prompt. That directory is the append-only log; `MEMORY.md` inside it is loaded into context automatically at the start of every session in this repo, so the next agent finds the handoff without being told it exists.
+
+1. **Write the handoff file:** `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`, using the memory frontmatter format:
+   ```markdown
+   ---
+   name: handoff-<YYYY-MM-DD-HHMM>
+   description: Session handoff — <one-line title>
+   metadata:
+     type: project
+   ---
+   ```
+   followed by the output template below, verbatim.
+
+2. **Update `MEMORY.md` to point at it — replacing the previous handoff line, not appending a new one:**
+   ```
+   - [Latest session handoff, <YYYY-MM-DD>](handoff-<YYYY-MM-DD-HHMM>.md) — prior session summary. Pick up here: <the "Pick up here" line>
+   ```
+   Keep this line purely descriptive. It must not instruct a fresh agent to open the file — `MEMORY.md` is auto-injected into every session, and an imperative here would make resuming fire on topic similarity rather than on the user's explicit request. Loading a handoff is opt-in by phrasing, and the frontmatter triggers are the only gate. Do not add "read this first", "before continuing", or similar.
+
+   Exactly one handoff line lives in `MEMORY.md` at any time. Older handoff files stay on disk and are found with `ls`/`Glob` on `handoff-*.md` when history is actually needed.
+   <!-- ponytail: one rolling pointer instead of a summary tree — handoffs number in the dozens, not millions. If MEMORY.md ever bloats, that's the signal to compact, not now. -->
+
+3. **Print the same handoff in chat** so the user can read it without opening the file.
+
+## Reading a handoff in a fresh session
+
+When the user asks to resume, do this before anything else — before answering, before exploring, before touching code:
+
+1. Read the newest `handoff-*.md` in this repo's memory directory. Get the path from the handoff line in `MEMORY.md`; if that line is missing, `Glob` for `handoff-*.md` and take the last filename alphabetically (the timestamp sorts).
+2. Read whatever it names under "Key files for next session", including the plan file if there is one.
+3. Report the "Pick up here" line back to the user in one sentence, then proceed.
+
+If no `handoff-*.md` exists, say so plainly — do not reconstruct a summary from `git log` or the filesystem. There is nothing to resume from.
+
+Older handoffs are the history: same `Glob`, read further back only if the newest one references something you need.
 
 ## Output template — use exactly this structure, every time
 
@@ -64,7 +104,7 @@ User says: "session handoff", "wrap up session", "hand off", "handoff summary", 
 
 ## Hard rules
 
-1. **Chat output only.** Never write the handoff to a file. Never update memory from this skill.
+1. **Write to project memory and print in chat — both, every time.** Never write the handoff anywhere else (no `~/.claude/handoffs/`, no file in the repo).
 2. **Never invent state.** If a section has nothing to report, write "none" — do not omit the section. Structure stability is the whole point.
 3. **Absolute paths always.** The next agent may have a different working directory.
 4. **If a plan file drove the session, name it first** in "Key files" so the next agent reads it before anything else.
@@ -76,6 +116,7 @@ User says: "session handoff", "wrap up session", "hand off", "handoff summary", 
 - Summarizing the last 3 turns and calling it a handoff.
 - Listing files by relative path.
 - Skipping the "Running state" section because "nothing is running" — write "none" instead.
-- Writing the summary to `~/.claude/handoffs/` or any file. This is chat-only by design.
+- Appending a second handoff line to `MEMORY.md` instead of replacing the existing one. The index holds one pointer; the log holds the history.
+- Editing or deleting a previous `handoff-*.md`. They are append-only log entries.
 - Adding a "what went well / what went poorly" retrospective. This isn't a retro.
 - Recommending next steps beyond the single "Pick up here" line. The next agent decides; you just hand off.

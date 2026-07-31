@@ -2,7 +2,7 @@
 
 A Claude Code skill + hook pair for wrapping up a session cleanly before you `/clear` or run out of context.
 
-- **`skills/session-handoff/SKILL.md`** — produces a structured, chat-only handoff summary (decisions, key files, running state, verification steps, open questions) so a fresh Claude Code session can pick up where the last one left off.
+- **`skills/session-handoff/SKILL.md`** — produces a structured handoff summary (decisions, key files, running state, verification steps, open questions) so a fresh Claude Code session can pick up where the last one left off. It writes the handoff into the repo's project memory directory and prints it in chat — no copy-paste into the next session.
 - **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that watches token usage and nudges you to run the handoff skill once you cross 120k tokens, before context quality degrades.
 - **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook (matcher `Task`) that catches the same threshold *between* delegated tasks in a subagent-orchestrated run, where no user prompt fires to trigger the hook above.
 
@@ -58,7 +58,22 @@ They work together but none require each other: the skill can be triggered manua
 ## Notes
 
 - Each hook's `THRESHOLD_TOKENS` (default 120,000) is a fixed cutoff, not model-aware. Adjust it in the scripts if you're on a smaller context window (set both to keep them in sync).
-- The skill is chat-output only by design — it never writes files or updates memory, so it's safe to run repeatedly.
+- Running the skill twice in a session is safe: it writes a new dated handoff file and repoints the single index line at it.
+
+## How handoffs persist across sessions
+
+Nothing to install and nothing to run. The skill writes to Claude Code's own per-project memory directory (`~/.claude/projects/<repo-slug>/memory/`, requires memory to be enabled):
+
+- `handoff-<YYYY-MM-DD-HHMM>.md` — one immutable file per handoff. The append-only log.
+- `MEMORY.md` — the index, which Claude Code loads into context at the start of every session **in that repo**. The skill keeps exactly one handoff line in it, pointing at the newest file.
+
+So a fresh session in the repo already sees "there is a handoff, here's the one-line pick-up-here". To load the full thing, open the session with **"resume from before"** — or "resume", "pick up where we left off", "continue from last time", "catch me up", "where did we leave off". Older handoffs sit on disk, found by globbing `handoff-*.md`.
+
+Resuming is opt-in **by phrasing, not by topic**. Ask to resume and the handoff loads; start unrelated work in the same repo and nothing stale comes with it. The distinction matters: gating on topic similarity would mean the agent judges whether your request "looks like" prior work, which is exactly the non-deterministic behavior this avoids.
+
+That's why the `MEMORY.md` index line is deliberately descriptive rather than imperative. It names the file and shows the one-line pick-up-here (~20 tokens, always in context), but it does not tell the agent to open it. The skill's frontmatter triggers are the only gate.
+
+This is the idea behind [OptMem](https://github.com/VictorTaelin/OptMem) — an append-only memory log plus a small budget of it read at wake time — minus the machinery. OptMem builds a binary summary tree over fixed-width records so a million memories still wake in 0.03s. A repo accumulates handoffs in the dozens, and `MEMORY.md` is already the wake read, so the tree and its compaction commands earn nothing here. If the index ever bloats, that's the point to revisit.
 
 ## How the two hooks divide the work
 
