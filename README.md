@@ -1,12 +1,12 @@
 # claude-session-handoff
 
-A Claude Code skill + hook pair for wrapping up a session cleanly before you `/clear` or run out of context.
+A Claude Code skill + hook pair for wrapping up a session cleanly before you `/clear` or run out of context — and picking it back up in the next one.
 
-- **`skills/session-handoff/SKILL.md`** — produces a structured handoff summary (decisions, key files, running state, verification steps, open questions) so a fresh Claude Code session can pick up where the last one left off. It writes the handoff into the repo's project memory directory and prints it in chat — no copy-paste into the next session.
+- **`skills/session-handoff/SKILL.md`** — runs in two directions. **Writing:** produces a structured handoff summary (decisions, key files, running state, verification steps, open questions) and stores it in the repo's project memory directory, so there's nothing to copy-paste. **Reading:** when you explicitly ask to resume, loads that stored handoff back into a fresh session.
 - **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that watches token usage and nudges you to run the handoff skill once you cross 120k tokens, before context quality degrades.
 - **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook (matcher `Task`) that catches the same threshold *between* delegated tasks in a subagent-orchestrated run, where no user prompt fires to trigger the hook above.
 
-They work together but none require each other: the skill can be triggered manually at any time by saying "session handoff" / "wrap up session"; the hooks just automate *when* to remember to do that.
+They work together but none require each other: the skill can be triggered manually at any time by saying "session handoff" or "resume from before"; the hooks just automate *when* to remember to write one.
 
 ## Install
 
@@ -53,7 +53,19 @@ They work together but none require each other: the skill can be triggered manua
 
    The second hook is optional — skip it if you don't run subagent-orchestrated plans and only want the prompt-time warning.
 
-4. Restart/start a new Claude Code session for the hooks to take effect.
+4. Restart/start a new Claude Code session for the hooks and skill to take effect.
+
+## Usage
+
+Two phrases, one loop.
+
+**Ending a session** — say **"session handoff"** (or "wrap up session", "hand off"). The skill writes the handoff to project memory and prints it in chat. Then `/clear` or quit; nothing to copy.
+
+Run it whenever the next thing you'd do is `/clear`, `/compact`, or close the window — and whenever the context hook nudges you at 120k. Running it more than once per session is fine.
+
+**Starting the next one** — say **"resume from before"** (or "resume", "pick up where we left off", "continue from last time", "catch me up", "where did we leave off", "load the last handoff"). The skill reads the newest stored handoff, opens the files it names, and tells you where to pick up.
+
+Start unrelated work in the same repo and you say neither — nothing stale loads. See [How handoffs persist across sessions](#how-handoffs-persist-across-sessions) for why that's a phrasing decision rather than a judgment call.
 
 ## Notes
 
@@ -86,3 +98,5 @@ Both hooks stay silent below the threshold: the scripts run, but they print noth
 ## Credits
 
 `skills/session-handoff/SKILL.md` credit: [Nate Herk](https://www.linkedin.com/in/nateherkelman/).
+
+The persistence model — append-only memory log plus a small budget of it read at wake time — is borrowed from [OptMem](https://github.com/VictorTaelin/OptMem) by [Victor Taelin](https://github.com/VictorTaelin).
