@@ -15,17 +15,17 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
 
 **To read one** — user opens a session with "resume from last session", "resume from before", "pick up where we left off", "continue from last time", "what was I working on", or any near-equivalent. Skip straight to "Reading a handoff in a fresh session" below; do not write anything.
 
-**Automated trigger:** The `context-threshold-warn.py` hook (`~/.claude/hooks/`) alerts at 60% of the 200k model context window, prompting the user to run this skill.
+**Automated trigger:** The `context-threshold-warn.py` hook (`~/.claude/hooks/`) alerts at a fixed 120k tokens of context used, prompting the user to run this skill.
 
 ## How to produce the summary
 
 1. **Review the full conversation**, not just the last few turns. Handoffs miss things when they only summarize recent context.
 2. **Pull state from these sources (in order):**
-   - Plan files referenced this session (check `C:\Users\david\.claude\plans\` if a plan was mentioned).
+   - Plan files referenced this session (check `~/.claude/plans/` if a plan was mentioned).
    - TodoWrite state — any in-progress or pending tasks.
    - Background processes you started with `run_in_background` — shell IDs are load-bearing for the next agent.
    - Files created or modified this session — you know what you touched; don't grep to re-discover.
-   - Memory files written or updated (`C:\Users\david\.claude\projects\<project>\memory\`).
+   - Memory files written or updated (`~/.claude/projects/<project-slug>/memory/`).
    - Unresolved questions — things you asked the user that never got a clear answer, or things the user asked that got deflected.
 3. **Do NOT audit the filesystem.** This is synthesis of what happened in THIS session. No `git log`, no broad `Glob` sweeps. If you didn't touch it this session, it doesn't belong here.
 4. **Write it to project memory, then print it in chat.** See "Where the handoff goes" below.
