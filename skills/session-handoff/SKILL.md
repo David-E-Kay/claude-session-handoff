@@ -34,7 +34,7 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
 
 The handoff is written into this repo's project memory directory — the same `.../projects/<repo-slug>/memory/` path given in your system prompt. That directory is the append-only log; `MEMORY.md` inside it is loaded into context automatically at the start of every session in this repo, so the next agent finds the handoff without being told it exists.
 
-1. **Write the handoff file:** `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`, using the memory frontmatter format:
+1. **Write the handoff file:** `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`. **Get the timestamp from the clock — `date +%Y-%m-%d-%H%M`, or `Get-Date -Format "yyyy-MM-dd-HHmm"` in PowerShell — never guess it.** You have the date in context but no clock, and a fabricated `HHMM` silently inverts the log's ordering: one handoff was named `-1930` but written at 11:00, which made "newest by filename" return the oldest file. Use the memory frontmatter format:
    ```markdown
    ---
    name: handoff-<YYYY-MM-DD-HHMM>
@@ -51,7 +51,7 @@ The handoff is written into this repo's project memory directory — the same `.
    ```
    Keep this line purely descriptive. It must not instruct a fresh agent to open the file — `MEMORY.md` is auto-injected into every session, and an imperative here would make resuming fire on topic similarity rather than on the user's explicit request. Loading a handoff is opt-in by phrasing, and the frontmatter triggers are the only gate. Do not add "read this first", "before continuing", or similar.
 
-   Exactly one handoff line lives in `MEMORY.md` at any time. Older handoff files stay on disk and are found with `ls`/`Glob` on `handoff-*.md` when history is actually needed.
+   Exactly one handoff line lives in `MEMORY.md` at any time. Older handoff files stay on disk as a spent log. They are superseded by the newest one and are **not** a retrieval source — durable knowledge belongs in topic files (`project_*.md`, `feedback_*.md`), which `MEMORY.md` indexes permanently.
    <!-- ponytail: one rolling pointer instead of a summary tree — handoffs number in the dozens, not millions. If MEMORY.md ever bloats, that's the signal to compact, not now. -->
 
 3. **Print the same handoff in chat** so the user can read it without opening the file.
@@ -60,13 +60,15 @@ The handoff is written into this repo's project memory directory — the same `.
 
 When the user asks to resume, do this before anything else — before answering, before exploring, before touching code:
 
-1. Read the newest `handoff-*.md` in this repo's memory directory. Get the path from the handoff line in `MEMORY.md`; if that line is missing, `Glob` for `handoff-*.md` and take the last filename alphabetically (the timestamp sorts).
+1. Read the newest `handoff-*.md` in this repo's memory directory. Get the path from the handoff line in `MEMORY.md`; if that line is missing, take the newest by mtime — `ls -t handoff-*.md | head -1` — not the last filename alphabetically. Any filename written before the clock rule above was adopted may carry a fabricated timestamp and sort wrong; mtime is correct regardless of what the name claims.
 2. Read whatever it names under "Key files for next session", including the plan file if there is one.
 3. Report the "Pick up here" line back to the user in one sentence, then proceed.
 
 If no `handoff-*.md` exists, say so plainly — do not reconstruct a summary from `git log` or the filesystem. There is nothing to resume from.
 
-Older handoffs are the history: same `Glob`, read further back only if the newest one references something you need.
+**Do not read older handoffs.** Each one supersedes the one before it, so anything older is stale state by definition — and a handoff written mid-session can end up describing work that changed an hour later, forcing its successor to correct it. Reading back through the log costs tokens and returns descriptions that were only briefly true.
+
+The durable record is this directory's topic files (`project_*.md`, `feedback_*.md`), all indexed in `MEMORY.md`. If the newest handoff names something it doesn't carry, read the topic file — not the log. If a fact worth keeping only exists in a handoff, that is the signal to promote it into a topic file, not to start mining the archive.
 
 ## Output template — use exactly this structure, every time
 
