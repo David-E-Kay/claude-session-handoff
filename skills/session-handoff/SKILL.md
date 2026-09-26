@@ -28,33 +28,26 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
    - Memory files written or updated (`~/.claude/projects/<project-slug>/memory/`).
    - Unresolved questions — things you asked the user that never got a clear answer, or things the user asked that got deflected.
 3. **Do NOT audit the filesystem.** This is synthesis of what happened in THIS session. No `git log`, no broad `Glob` sweeps. If you didn't touch it this session, it doesn't belong here.
-4. **Write it to project memory, then print it in chat.** See "Where the handoff goes" below.
+4. **Print it once in chat, starting with the memory-dir marker; the Stop hook saves it.** See "Where the handoff goes" below.
 
 ## Where the handoff goes
 
-The handoff is written into this repo's project memory directory — the same `.../projects/<repo-slug>/memory/` path given in your system prompt. That directory is the append-only log; `MEMORY.md` inside it is loaded into context automatically at the start of every session in this repo, so the next agent finds the handoff without being told it exists.
+**One reply, no tool calls.** Print the handoff in chat, once, and stop. The `handoff-save.py` Stop hook (`~/.claude/hooks/`) runs when your reply finishes and saves it to project memory for you: it stamps the filename from the real clock, adds the memory frontmatter, writes `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`, and repoints the single handoff line in `MEMORY.md`. Do not write, edit, or `date` anything yourself — every tool call re-reads the whole conversation, and at handoff time that is 120k+ tokens per step.
 
-1. **Write the handoff file:** `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`. **Get the timestamp from the clock — `date +%Y-%m-%d-%H%M`, or `Get-Date -Format "yyyy-MM-dd-HHmm"` in PowerShell — never guess it.** You have the date in context but no clock, and a fabricated `HHMM` silently inverts the log's ordering: one handoff was named `-1930` but written at 11:00, which made "newest by filename" return the oldest file. Use the memory frontmatter format:
-   ```markdown
-   ---
-   name: handoff-<YYYY-MM-DD-HHMM>
-   description: Session handoff — <one-line title>
-   metadata:
-     type: project
-   ---
-   ```
-   followed by the output template below, verbatim.
+The very first line of the reply must be this marker, with the project memory directory given in your system prompt (`.../projects/<repo-slug>/memory`) as an absolute path:
 
-2. **Update `MEMORY.md` to point at it — replacing the previous handoff line, not appending a new one:**
-   ```
-   - [Latest session handoff, <YYYY-MM-DD>](handoff-<YYYY-MM-DD-HHMM>.md) — prior session summary. Pick up here: <the "Pick up here" line>
-   ```
-   Keep this line purely descriptive. It must not instruct a fresh agent to open the file — `MEMORY.md` is auto-injected into every session, and an imperative here would make resuming fire on topic similarity rather than on the user's explicit request. Loading a handoff is opt-in by phrasing, and the frontmatter triggers are the only gate. Do not add "read this first", "before continuing", or similar.
+```
+<!-- handoff-memory-dir: <absolute memory dir> -->
+```
 
-   Exactly one handoff line lives in `MEMORY.md` at any time. Older handoff files stay on disk as a spent log. They are superseded by the newest one and are **not** a retrieval source — durable knowledge belongs in topic files (`project_*.md`, `feedback_*.md`), which `MEMORY.md` indexes permanently.
-   <!-- ponytail: one rolling pointer instead of a summary tree — handoffs number in the dozens, not millions. If MEMORY.md ever bloats, that's the signal to compact, not now. -->
+Then the output template below, verbatim. Nothing before the marker — no preamble, no "Here's the handoff". The hook ignores any reply whose first line is not the marker, so a missing or late marker means nothing is saved.
 
-3. **Print the same handoff in chat** so the user can read it without opening the file.
+The hook confirms with "Handoff saved to <path>" or reports "Handoff NOT saved". Only if the user relays a failure (or says the hook isn't installed) fall back to writing it by hand: `handoff-<timestamp from date +%Y-%m-%d-%H%M>.md` with frontmatter `name`, `description: Session handoff — <title>`, `metadata: type: project`, then replace the one `](handoff-` line in `MEMORY.md`.
+
+What the hook maintains, so you know what the next agent sees:
+- `MEMORY.md` holds exactly one handoff line: `- [Latest session handoff, <YYYY-MM-DD>](handoff-<...>.md) — prior session summary. Pick up here: <the "Pick up here" line>`. It is purely descriptive on purpose — `MEMORY.md` is auto-injected into every session, and an imperative there would make resuming fire on topic similarity rather than on the user's explicit request. Loading a handoff is opt-in by phrasing; the frontmatter triggers are the only gate.
+- Older handoff files stay on disk as a spent, append-only log. They are superseded by the newest one and are **not** a retrieval source — durable knowledge belongs in topic files (`project_*.md`, `feedback_*.md`), which `MEMORY.md` indexes permanently.
+  <!-- ponytail: one rolling pointer instead of a summary tree — handoffs number in the dozens, not millions. If MEMORY.md ever bloats, that's the signal to compact, not now. -->
 
 ## Reading a handoff in a fresh session
 
@@ -106,7 +99,7 @@ The durable record is this directory's topic files (`project_*.md`, `feedback_*.
 
 ## Hard rules
 
-1. **Write to project memory and print in chat — both, every time.** Never write the handoff anywhere else (no `~/.claude/handoffs/`, no file in the repo).
+1. **One reply, marker first, no tool calls.** The hook saves it to project memory; never write the handoff anywhere else (no `~/.claude/handoffs/`, no file in the repo).
 2. **Never invent state.** If a section has nothing to report, write "none" — do not omit the section. Structure stability is the whole point.
 3. **Absolute paths always.** The next agent may have a different working directory.
 4. **If a plan file drove the session, name it first** in "Key files" so the next agent reads it before anything else.
@@ -118,7 +111,7 @@ The durable record is this directory's topic files (`project_*.md`, `feedback_*.
 - Summarizing the last 3 turns and calling it a handoff.
 - Listing files by relative path.
 - Skipping the "Running state" section because "nothing is running" — write "none" instead.
-- Appending a second handoff line to `MEMORY.md` instead of replacing the existing one. The index holds one pointer; the log holds the history.
+- Writing the handoff to disk yourself, or printing it twice. The hook does the saving; your job is the one reply.
 - Editing or deleting a previous `handoff-*.md`. They are append-only log entries.
 - Adding a "what went well / what went poorly" retrospective. This isn't a retro.
 - Recommending next steps beyond the single "Pick up here" line. The next agent decides; you just hand off.

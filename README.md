@@ -4,6 +4,7 @@ A Claude Code skill + hook pair for wrapping up a session cleanly before you `/c
 
 - **`skills/session-handoff/SKILL.md`** — runs in two directions. **Writing:** produces a structured handoff summary (decisions, key files, running state, verification steps, open questions) and stores it in the repo's project memory directory, so there's nothing to copy-paste. **Reading:** when you explicitly ask to resume, loads that stored handoff back into a fresh session.
 - **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that watches token usage and nudges you to run the handoff skill once you cross 120k tokens, before context quality degrades.
+- **`hooks/handoff-save.py`** — a `Stop` hook that does the saving. The skill has Claude print the handoff once in chat; when that reply finishes, the hook writes it to project memory and updates the index. No extra model steps, so a handoff costs one reply instead of four or five. **Required** for the skill to save anything.
 - **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook (matcher `Task`) that catches the same threshold *between* delegated tasks in a subagent-orchestrated run, where no user prompt fires to trigger the hook above.
 
 They work together but none require each other: the skill can be triggered manually at any time by saying "session handoff" or "resume from before"; the hooks just automate *when* to remember to write one.
@@ -19,6 +20,7 @@ They work together but none require each other: the skill can be triggered manua
    ```
    cp hooks/context-threshold-warn.py ~/.claude/hooks/context-threshold-warn.py
    cp hooks/context-threshold-handoff-task.py ~/.claude/hooks/context-threshold-handoff-task.py
+   cp hooks/handoff-save.py ~/.claude/hooks/handoff-save.py
    ```
 
 3. **Register the hooks** by merging this into your `~/.claude/settings.json` (create the file if it doesn't exist):
@@ -31,6 +33,16 @@ They work together but none require each other: the skill can be triggered manua
              {
                "type": "command",
                "command": "python \"~/.claude/hooks/context-threshold-warn.py\""
+             }
+           ]
+         }
+       ],
+       "Stop": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "python \"~/.claude/hooks/handoff-save.py\""
              }
            ]
          }
@@ -49,7 +61,7 @@ They work together but none require each other: the skill can be triggered manua
      }
    }
    ```
-   If you already have `UserPromptSubmit` or `PreToolUse` arrays, append these entries rather than replacing the arrays. Use an absolute path (not `~`) on Windows.
+   If you already have `UserPromptSubmit`, `Stop` or `PreToolUse` arrays, append these entries rather than replacing the arrays. Use an absolute path (not `~`) on Windows.
 
    The second hook is optional — skip it if you don't run subagent-orchestrated plans and only want the prompt-time warning.
 
@@ -59,7 +71,7 @@ They work together but none require each other: the skill can be triggered manua
 
 Two phrases, one loop.
 
-**Ending a session** — say **"session handoff"** (or "wrap up session", "hand off"). The skill writes the handoff to project memory and prints it in chat. Then `/clear` or quit; nothing to copy.
+**Ending a session** — say **"session handoff"** (or "wrap up session", "hand off"). Claude prints the handoff in chat and the `Stop` hook saves it to project memory; you'll see "Handoff saved to …". Then `/clear` or quit; nothing to copy.
 
 Run it whenever the next thing you'd do is `/clear`, `/compact`, or close the window — and whenever the context hook nudges you at 120k. Running it more than once per session is fine.
 
