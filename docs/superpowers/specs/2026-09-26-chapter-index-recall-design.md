@@ -1,6 +1,7 @@
 # Chapter index for progressive recall — design
 
-Status: design approved in chat 2026-09-26, pending written-spec review.
+Status: design approved in chat 2026-09-26; revised 2026-09-27 (unknown-shape log,
+shared summary line, invariants, measurement and search notes).
 Branch: `claude/chapter-index-recall`.
 
 ## Purpose
@@ -27,7 +28,31 @@ reading-side rule and widened trigger, tests, README install steps.
 
 Out (later sub-projects): Jev ranking of the chapter list, MCP tool-server
 wrapper around the lookup commands, plugin packaging (`.claude-plugin/`),
-trimming the handoff template, a command to delete chapters.
+trimming the handoff template, a command to delete chapters, and:
+
+- **Dashboard reuse** (in the Multi Agent Dashboard repo): evaluate the board
+  reading the chapter's `ai_line` (Part 3) instead of making its own Ollama call
+  for the latest turn. First step: check whether the board summarises mid-reply
+  or only after a reply ends. Adopt only if cards update no slower, mid-reply
+  behaviour is no worse, and Codex sessions (not indexed here) keep their
+  current path. Otherwise drop it. The board never depends on this project:
+  it uses a chapter summary only when the index is installed and has one ready,
+  and otherwise keeps its current summaries for Claude and Codex unchanged, so
+  a dashboard-only install is unaffected.
+- **Codex sessions**: index Codex CLI sessions too. Needs its own transcript
+  reader (different log location and format) and its own after-turn trigger.
+  First step: check Codex's session-log format and after-turn mechanism, and
+  reuse what the dashboard's existing Codex parsing already handles (e.g. the
+  typed prompt arriving wrapped in pasted environment text). Room is made now:
+  every session row carries a `tool` column, and parsing stays per tool.
+- **Proof it works**: ~20 real "what did we decide about X" questions, each
+  answered with the handoff alone vs handoff + ladder; report accuracy and
+  tokens spent per rung. Its numbers fill in the README's cost-per-rung line.
+
+Note under the Jev deferral: an outside project measured keyword-only (BM25)
+recall at 79% Recall@5 vs 87% with embeddings, at ~27x the latency. If the
+chapter list ever outgrows one read, SQLite's built-in FTS5 text search is the
+zero-dependency option. Data point only; keyword recall was declined for now.
 
 ## Constraints
 
@@ -36,6 +61,20 @@ trimming the handoff template, a command to delete chapters.
 - Works with no Ollama and no Jev key; those are enhancements only.
 - Never blocks or slows a reply; the hook always exits 0.
 - Outline only: raw tool results are never copied into the database.
+
+## Invariants
+
+Rules the design never breaks. Each maps to the test that enforces it.
+
+| # | Invariant | Enforced by (`hooks/test_chapters.py`) |
+|---|---|---|
+| 1 | The hook never blocks or fails a reply: `record` always exits 0 and prints nothing | Garbage payload / missing transcript / bad transcript cases |
+| 2 | Raw tool results are never stored | `SECRET FILE BODY` / `RAW` absent from stored rows |
+| 3 | The offset advances only in the same transaction as the write: nothing lost, nothing duplicated | Re-run no-op, partial-line deferral, two concurrent writers |
+| 4 | Lookups never change the store: they open the database read-only and say "nothing recorded yet" if it is missing | Lookup against a missing DB leaves no file behind |
+| 5 | Works with no Ollama and no Jev key | Ollama-unset case: plain line only |
+| 6 | Stdlib only, no platform-specific calls outside one guarded spawn; tested on Windows only | No automated POSIX run exists — stated, not claimed |
+| 7 | An unrecognised message shape never starts a chapter and is never silently lost: it is logged for review | Unknown-shape case lands in `unknown_shapes` |
 
 ## Part 1 — Recording
 
@@ -83,8 +122,18 @@ Does not start a chapter:
   chapter ("background task finished").
 - Text beginning `<local-command-stdout>` or consisting only of `<system-reminder>`.
 
-Unknown shapes are treated as not-a-prompt. The build step confirms these rules
-against a fresh sample before relying on them.
+Unknown shapes are treated as not-a-prompt: text starting with an unlisted
+`<tag`, or a user line with no text (for example image-only). They are not
+dropped silently. Each is written to an `unknown_shapes` table, keyed by shape
+(the opening tag name, or `no-text`), with a count, first/last seen, the
+session it came from, one sample (≤200 chars, reminders stripped) and a
+`reviewed` flag. David reviews them with `chapters.py unknowns`. When a shape
+turns out to be a real prompt, the rule list gains it, and past sessions are
+re-split with `chapters.py rebuild`, which only works while the original
+transcript still exists (Claude Code deletes them after `cleanupPeriodDays`,
+30 by default), so the review is worth doing now and then.
+
+The build step confirms these rules against a fresh sample before relying on them.
 
 ### What a chapter stores
 
@@ -121,9 +170,13 @@ skipped and the next Stop catches up via the unmoved offset.
 
 Tables (shape, not final DDL):
 
-- `sessions(session_id PK, project, transcript_path, offset, open_chapter_id, updated_at)`
+- `sessions(session_id PK, tool, project, transcript_path, offset, open_chapter_id, updated_at)`
+  — `tool` is `claude` for everything this build records; `codex` is reserved
+  for the Codex sub-project.
 - `chapters(id PK autoincrement, session_id, project, branch, started_at, ended_at,
   prompt, replies, actions, decisions, files, plain_line, ai_line, revision)`
+- `unknown_shapes(shape PK, count, first_seen, last_seen, session_id, sample, reviewed)`
+  — written in the same transaction as the chapters.
 
 Chapter `id` is global and stable, so `#413` means the same chapter forever.
 
@@ -133,6 +186,11 @@ Chapter `id` is global and stable, so `#413` means the same chapter forever.
 subagent files), taking `cwd` from the transcript lines, and records each with
 the same code path as the hook. Re-running is safe: the per-session offset makes
 already-read material a no-op.
+
+`chapters.py rebuild [SESSION_ID | --all]` deletes a session's chapters and
+offset and records it again from its transcript, so a changed rule applies
+backwards. Sessions whose transcript is gone are left untouched and reported.
+Chapter ids for a rebuilt session change.
 
 ## Part 2 — Lookup (the ladder)
 
@@ -144,7 +202,13 @@ Commands, all on the same file:
 | 2 | `chapters.py list [--all-projects] [--limit 150] [--before ID]` | One line per chapter, grouped by session, newest first |
 | 3 | `chapters.py show ID [--full]` | Prompt, replies, action outline, decisions; capped ~6000 chars unless `--full` |
 | 4 | `chapters.py output ID N` | Raw result of action N, read from the original transcript by `tool_use_id`, capped ~3000 chars |
-| — | `chapters.py status` | Last successful record time, recent errors |
+| — | `chapters.py status` | Last successful record time, recent errors, unknown shapes awaiting review |
+| — | `chapters.py unknowns [--all] [--mark-reviewed SHAPE]` | Unreviewed unknown shapes with count, dates, sample |
+| — | `chapters.py summary SESSION_ID` | JSON for the session's latest chapter: `id`, `revision`, `ended_at`, `ai_line`, `plain_line` — the read path for other programs (Part 3) |
+
+Lookups open the database read-only; if it does not exist they print "No
+chapters recorded yet." and create nothing. (`--mark-reviewed` is the one
+lookup-side write, and it touches only `unknown_shapes`.)
 
 `list` defaults to the current project (from the working directory, same
 normalisation as recording). Each line shows `ai_line` if present, else
@@ -187,9 +251,18 @@ the reply sentence usually carries the meaning.
 ### Ollama line (optional)
 
 Enabled only when `CHAPTER_SUMMARY_MODEL` is set (David: `qwen2.5:1.5b-instruct`,
-already pulled). Deliberately separate from the dashboard's `BOARD_SUMMARY_MODEL`
-so changing one never changes the other. Endpoint `CHAPTER_OLLAMA_URL`, default
-`http://localhost:11434`.
+already pulled). It stays a separate setting from the dashboard's
+`BOARD_SUMMARY_MODEL` because the public plugin cannot assume the dashboard; on
+David's machine both point at the same model. Endpoint `CHAPTER_OLLAMA_URL`,
+default `http://localhost:11434`.
+
+The `ai_line` is a shared product: written once per chapter revision, and
+readable by other programs through `chapters.py summary SESSION_ID` rather than
+by opening the database, so the storage layout can change without breaking
+them. A chapter is one turn (a user prompt through the full reply), the same
+stretch the dashboard's card summarises, so the dashboard can reuse it (see
+the Dashboard reuse sub-project). The line should therefore read well as a
+card: what the turn did, not how the reply phrased it.
 
 - After committing a chapter, `record` spawns a detached
   `chapters.py summarise ID REVISION` (Windows: `DETACHED_PROCESS |
@@ -237,6 +310,12 @@ at a temp file, prints `ok`. Cases:
    revision → not written.
 8. `list`/`show`/`output` formatting; deleted transcript → plain message.
 9. Error-warning line appears when the log has a newer error than the last success.
+10. An unknown `<tag` and an image-only line start no chapter and land in
+    `unknown_shapes` (count increments on repeat; `--mark-reviewed` hides it).
+11. A lookup against a missing database creates no file.
+12. `rebuild` re-splits a session under a changed rule; a session with no
+    transcript is left alone.
+13. `summary SESSION_ID` returns the latest chapter's JSON.
 
 Each test is shown to fail against a deliberate break before it is trusted.
 A final smoke run records a read-only copy of a real transcript.
@@ -246,6 +325,9 @@ A final smoke run records a read-only copy of a real transcript.
 - `hooks/chapters.py` — new: record, import, summarise, list, show, output, status.
 - `hooks/test_chapters.py` — new.
 - `skills/session-handoff/SKILL.md` — frontmatter trigger + reading section.
-- `README.md` — install steps, the optional Ollama setting.
+- `README.md` — install steps, the optional Ollama setting, and the ladder
+  framed as cost per rung: each rung costs roughly 10x the one before, and each
+  is a place to stop (real token numbers filled in after the Proof-it-works
+  measurement).
 - Installing into `~/.claude/` and registering the Stop hook in
   `~/.claude/settings.json` is a separate final step, done only with approval.
