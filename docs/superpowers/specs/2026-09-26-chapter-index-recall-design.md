@@ -48,6 +48,11 @@ trimming the handoff template, a command to delete chapters, and:
 - **Proof it works**: ~20 real "what did we decide about X" questions, each
   answered with the handoff alone vs handoff + ladder; report accuracy and
   tokens spent per rung. Its numbers fill in the README's cost-per-rung line.
+- **Jev prompt classifier**: `classify()` (Task 1a) decides "is this a real
+  user prompt?" with hand-written rules. A Jev yes/no judgement is a candidate
+  replacement, or a second opinion on lines the rules call `unknown`. First
+  step: run both over the real transcripts and compare disagreements. The
+  rules stay the default, since the hook must work with no Jev key.
 
 Note under the Jev deferral: an outside project measured keyword-only (BM25)
 recall at 79% Recall@5 vs 87% with embeddings, at ~27x the latency. If the
