@@ -37,28 +37,51 @@ def tag(s, name):
     return m.group(1).strip() if m else ""
 
 
-def prompt_text(entry):
-    """The user's prompt if this transcript line starts a chapter, else None."""
+def one_line(s, cap):
+    s = " ".join(s.split())
+    return s if len(s) <= cap else s[: cap - 1] + "…"
+
+
+SKIP = ("skip", "", "")
+
+
+def classify(entry):
+    """Sort one transcript line: ("prompt", text, "") starts a chapter; ("unknown", shape, sample)
+    is a user line no rule recognises (logged for review, never a prompt); anything else is SKIP."""
     if entry.get("type") != "user" or entry.get("isMeta") or entry.get("isCompactSummary") or entry.get("isSidechain"):
-        return None
+        return SKIP
     content = (entry.get("message") or {}).get("content")
+    other = []  # non-text block types, e.g. "image"
     if isinstance(content, list):
         if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
-            return None
+            return SKIP
+        other = [str(b.get("type")) for b in content if isinstance(b, dict) and b.get("type") != "text"]
         content = block_text(content)
     if not isinstance(content, str):
-        return None
+        content = ""
     s = REMINDER.sub("", content).strip()
-    if not s or s.startswith(NOT_PROMPTS):
-        return None
+    if not s:
+        if content.strip() and not other:
+            return SKIP  # only system reminders
+        return ("unknown", "no-text", ",".join(other)[:200] or "empty")
+    if s.startswith(NOT_PROMPTS):
+        return SKIP
     if s.startswith(("<command-message>", "<command-name>")):
-        return " ".join(x for x in (tag(s, "command-name"), tag(s, "command-args")) if x) or None
+        cmd = " ".join(x for x in (tag(s, "command-name"), tag(s, "command-args")) if x)
+        if cmd:
+            return ("prompt", cmd, "")
     m = re.match(r'<scheduled-task name="([^"]*)"', s)
     if m:
-        return f"scheduled: {m.group(1)}"
+        return ("prompt", f"scheduled: {m.group(1)}", "")
     if s.startswith("<") and not s.startswith(("<!-- attach", "<!-- reply")) and "<pasted_content" not in s:
-        return None
-    return s
+        return ("unknown", re.match(r"<([^\s>]*)", s).group(1) or "<", one_line(s, 200))
+    return ("prompt", s, "")
+
+
+def prompt_text(entry):
+    """The user's prompt if this transcript line starts a chapter, else None."""
+    kind, value, _ = classify(entry)
+    return value if kind == "prompt" else None
 
 
 def arg_summary(name, inp):

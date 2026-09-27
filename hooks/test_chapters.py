@@ -62,6 +62,22 @@ assert P(user("<unknown-tag>x</unknown-tag>")) is None
 assert P(user('<pasted_content id="ab">\nstuff\n</pasted_content>\nmy note')).startswith("<pasted_content")
 assert P(user("<!-- reply -->\n> quoted\nanswer")).endswith("answer")
 
+# --- Task 1a: three-way classify; unknown shapes are named, never prompts ---
+C = chapters.classify
+IMG = {"type": "image", "source": {}}
+assert C(user("fix the bug")) == ("prompt", "fix the bug", "")
+assert C(result("t1", "x")) == C(asst(text("hi"))) == ("skip", "", "")
+assert C(user("<system-reminder>\nnote only\n</system-reminder>")) == ("skip", "", "")
+assert C(user("<task-notification>\n<summary>done</summary>")) == ("skip", "", "")
+assert C(user("<odd-tag a=1>x</odd-tag>")) == ("unknown", "odd-tag", "<odd-tag a=1>x</odd-tag>")
+assert C(user("<system-reminder>r</system-reminder>\n<odd>hi")) == ("unknown", "odd", "<odd>hi"), "sample drops reminders"
+assert len(C(user("<odd>" + "y" * 300))[2]) == 200
+assert C(user([IMG])) == ("unknown", "no-text", "image")
+assert C(user([IMG, text("<system-reminder>r</system-reminder>")])) == ("unknown", "no-text", "image"), "image + reminder only"
+assert C(user("")) == ("unknown", "no-text", "empty")
+assert C(user("<command-args>x</command-args>"))[:2] == ("unknown", "command-args")
+assert chapters.feed([], user([IMG])) is False, "an unknown shape never opens a chapter"
+
 # --- Task 1: building chapters ---
 chs = []
 for e in [
