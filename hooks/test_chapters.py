@@ -296,4 +296,54 @@ with tempfile.TemporaryDirectory() as tmp:
     assert r.returncode == 0 and "Lookup failed" in r.stdout, r
     assert not (tmp / "chapter-index.log").exists(), "lookup failures must not look like recording failures"
 
+# --- Task 4: import + rebuild ---
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    env = {**os.environ, "CHAPTER_INDEX_DB": str(tmp / "idx.db")}
+    root = tmp / "projects"
+    for proj, sid in (("p1", "a1"), ("p2", "b1")):
+        (root / proj / sid).mkdir(parents=True)  # subagent transcripts live in a subfolder: never imported
+        write_lines(root / proj / f"{sid}.jsonl", [user(f"ask {sid}"), asst(text("Done."))])
+        write_lines(root / proj / sid / "agent-x.jsonl", [user("SUBAGENT ask"), asst(text("sub"))])
+    r = run("import", str(root), env=env)
+    assert r.returncode == 0 and r.stdout.strip() == "Imported 2 transcripts: 2 chapters written.", r
+    r = run("import", str(root), env=env)
+    assert r.stdout.strip() == "Imported 2 transcripts: 0 chapters written.", r  # re-run is a no-op
+    con = sqlite3.connect(tmp / "idx.db")
+    assert con.execute("SELECT COUNT(*) FROM chapters").fetchone()[0] == 2
+    assert not con.execute("SELECT 1 FROM chapters WHERE prompt LIKE 'SUBAGENT%'").fetchone()
+    con.close()
+    assert run("rebuild", "a1", env=env).stdout.strip() == "Rebuilt 1 sessions: 1 chapters written."
+    assert run("rebuild", "nope", env=env).stdout.strip() == "No recorded session nope."
+
+    # rebuild under a changed rule: in-process, so the rule can change between record and rebuild
+    tr = root / "p1" / "r1.jsonl"
+    write_lines(tr, [user("keep this"), asst(text("A.")), user("zz later"), asst(text("B.")), user("<odd-tag> x"),
+                     user("<new-tag> y")])
+    saved = chapters.DB_PATH, chapters.LOG_PATH, chapters.NOT_PROMPTS
+    chapters.DB_PATH, chapters.LOG_PATH = tmp / "idx.db", tmp / "chapter-index.log"  # never the real DB
+    try:
+        assert len(chapters.record({"session_id": "r1", "transcript_path": str(tr)})) == 2
+        con = sqlite3.connect(tmp / "idx.db")
+        with con:  # pretend new-tag was never seen: rebuild must still log it (invariant 7)
+            con.execute("DELETE FROM unknown_shapes WHERE shape='new-tag'")
+        con.close()
+        chapters.NOT_PROMPTS = saved[2] + ("zz",)  # the changed rule: "zz ..." is no longer a prompt
+        out = chapters.cmd_rebuild("r1", False)
+        assert out == "Rebuilt 1 sessions: 1 chapters written.", out
+        con = sqlite3.connect(tmp / "idx.db")
+        rows = con.execute("SELECT prompt, replies FROM chapters WHERE session_id='r1'").fetchall()
+        assert rows == [("keep this", json.dumps(["A.", "B."]))], rows
+        assert con.execute("SELECT count FROM unknown_shapes WHERE shape='odd-tag'").fetchone()[0] == 1, "no double count"
+        assert con.execute("SELECT count FROM unknown_shapes WHERE shape='new-tag'").fetchone() == (1,), "new shape logged"
+        con.close()
+        (root / "p2" / "b1.jsonl").unlink()
+        out = chapters.cmd_rebuild(None, True)
+        assert "Left untouched (transcript gone): b1" in out and "Rebuilt 2 sessions" in out, out
+        con = sqlite3.connect(tmp / "idx.db")
+        assert con.execute("SELECT prompt FROM chapters WHERE session_id='b1'").fetchone() == ("ask b1",)
+        con.close()
+    finally:
+        chapters.DB_PATH, chapters.LOG_PATH, chapters.NOT_PROMPTS = saved
+
 print("ok")

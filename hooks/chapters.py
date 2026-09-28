@@ -237,20 +237,25 @@ def save_chapter(con, ch, session_id, project):
     return ch["id"], con.execute("SELECT revision FROM chapters WHERE id=?", (ch["id"],)).fetchone()[0]
 
 
-def note_unknown(con, shape, sample, session_id, seen):
-    con.execute("INSERT INTO unknown_shapes(shape, count, first_seen, last_seen, session_id, sample) "
-                "VALUES (?,1,?,?,?,?) ON CONFLICT(shape) DO UPDATE SET count=count+1, last_seen=excluded.last_seen",
+def note_unknown(con, shape, sample, session_id, seen, bump=True):
+    """bump=False (rebuild) only adds shapes not seen before, so re-reading a transcript never doubles counts."""
+    con.execute("INSERT INTO unknown_shapes(shape, count, first_seen, last_seen, session_id, sample) VALUES (?,1,?,?,?,?) "
+                "ON CONFLICT(shape) DO " + ("UPDATE SET count=count+1, last_seen=excluded.last_seen" if bump else "NOTHING"),
                 (shape, seen, seen, session_id, sample))
 
 
-def record(payload):
-    """Stop hook body: fold the transcript's new tail into the index. Returns [(chapter_id, revision)] written."""
+def record(payload, reset=False):
+    """Stop hook body: fold the transcript's new tail into the index. Returns [(chapter_id, revision)] written.
+    reset=True (rebuild) first forgets the session in the same transaction, so it is re-read from byte 0."""
     sid, tpath = payload.get("session_id"), payload.get("transcript_path")
     if not sid or not tpath or not Path(tpath).is_file():
         return []
     con = connect()
     try:
         con.execute("BEGIN IMMEDIATE")  # take the write lock before reading the offset: no double-processing
+        if reset:
+            con.execute("DELETE FROM chapters WHERE session_id=?", (sid,))
+            con.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
         row = con.execute("SELECT project, offset, open_chapter_id FROM sessions WHERE session_id=?", (sid,)).fetchone()
         entries, new_offset, had_bytes = read_new(tpath, row[1] if row else 0)
         if had_bytes and not any("type" in e for e in entries):
@@ -263,12 +268,12 @@ def record(payload):
             try:
                 kind, shape, sample = classify(e)
                 if kind == "unknown":  # same transaction as the chapters: logged exactly once
-                    note_unknown(con, shape, sample, sid, e.get("timestamp") or now())
+                    note_unknown(con, shape, sample, sid, e.get("timestamp") or now(), bump=not reset)
                 if feed(chs, e):  # feed only touches the last chapter or appends one
                     dirty.add(len(chs) - 1)
             except Exception as exc:  # malformed line: log and keep going, never lose the run
                 note_unknown(con, f"parse-error:{type(exc).__name__}", one_line(repr(exc), 200),
-                             sid, e.get("timestamp") or now())
+                             sid, e.get("timestamp") or now(), bump=not reset)
                 continue
         written = [save_chapter(con, chs[i], sid, project) for i in sorted(dirty)]
         open_id = chs[-1]["id"] if chs else None
@@ -457,6 +462,50 @@ def cmd_summary(session_id):
     return json.dumps(dict(zip(("id", "revision", "ended_at", "ai_line", "plain_line"), row)) if row else None)
 
 
+PROJECTS = Path.home() / ".claude" / "projects"
+
+
+def cmd_import(root):
+    """Record every top-level transcript under root; subagent transcripts live in subfolders and are skipped."""
+    done, written, failed = 0, 0, []
+    for t in sorted(Path(root).glob("*/*.jsonl")):
+        try:
+            written += len(record({"session_id": t.stem, "transcript_path": str(t)}))
+            done += 1
+        except Exception as e:  # one bad file must not stop the rest
+            failed.append(f"Failed {t}: {e!r}")
+    return "\n".join([f"Imported {done} transcripts: {written} chapters written.", *failed])
+
+
+def cmd_rebuild(session_id, all_sessions):
+    """Re-split recorded sessions from their transcripts. Chapter ids change; a session whose transcript is gone
+    is left untouched and reported."""
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        rows = con.execute("SELECT session_id, transcript_path FROM sessions" + ("" if all_sessions else " WHERE session_id=?"),
+                           () if all_sessions else (session_id,)).fetchall()
+    finally:
+        con.close()
+    if not rows:
+        return f"No recorded session {session_id}."
+    done, written, gone, failed = 0, 0, [], []
+    for sid, tpath in rows:
+        if not tpath or not Path(tpath).is_file():
+            gone.append(sid)
+            continue
+        try:
+            written += len(record({"session_id": sid, "transcript_path": tpath}, reset=True))
+            done += 1
+        except Exception as e:  # rolled back: that session keeps its old chapters
+            failed.append(f"Failed {sid}: {e!r}")
+    out = [f"Rebuilt {done} sessions: {written} chapters written."]
+    if gone:
+        out.append(f"Left untouched (transcript gone): {', '.join(gone)}")
+    return "\n".join(out + failed)
+
+
 def main(argv):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -491,8 +540,17 @@ def main(argv):
         p.add_argument("--mark-reviewed", metavar="SHAPE")
         p = sub.add_parser("summary")
         p.add_argument("session_id")
+        p = sub.add_parser("import")
+        p.add_argument("root", nargs="?", default=str(PROJECTS))
+        p = sub.add_parser("rebuild")
+        g = p.add_mutually_exclusive_group(required=True)
+        g.add_argument("session_id", nargs="?")
+        g.add_argument("--all", action="store_true")
         a = ap.parse_args(argv[1:])
         try:
+            if a.cmd in ("import", "rebuild"):  # write commands: no warning line
+                print(cmd_import(a.root) if a.cmd == "import" else cmd_rebuild(a.session_id, a.all))
+                return
             if a.cmd in ("status", "summary"):  # summary is JSON for programs: no warning line
                 print(cmd_status() if a.cmd == "status" else cmd_summary(a.session_id))
                 return
