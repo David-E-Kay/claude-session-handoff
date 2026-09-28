@@ -12,7 +12,9 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +23,8 @@ NOT_PROMPTS = ("<task-notification>", "<local-command-", "[Request interrupted b
 ARG_KEYS = ("file_path", "notebook_path", "command", "pattern", "description", "url", "skill", "query", "prompt")
 FILE_TOOLS = {"Read": False, "Edit": True, "Write": True, "NotebookEdit": True}  # value = changes the file
 DECISION_CAP = 500
+# The fixed opening line ~/.claude/hooks/context-threshold-warn.py asks for; keep the two in sync.
+WARN_LINE = re.compile(r"\A\W*Context check:[^\n]*\n*")
 
 
 def blocks(entry):
@@ -113,8 +117,12 @@ def feed(chapters, entry):
     if entry.get("type") == "assistant":
         for b in blocks(entry):
             if b.get("type") == "text" and b.get("text", "").strip():
-                ch["replies"].append(b["text"].strip())
-                changed = True
+                t = b["text"].strip()
+                if ch.pop("warned", False):  # the length-warning hook fired: its fixed line is not the work
+                    t = WARN_LINE.sub("", t, count=1).strip()
+                if t:
+                    ch["replies"].append(t)
+                    changed = True
             elif b.get("type") == "tool_use":
                 name, inp = b.get("name", ""), b.get("input") or {}
                 ch["actions"].append({"tool": name, "arg": arg_summary(name, inp),
@@ -123,6 +131,9 @@ def feed(chapters, entry):
                 if name in FILE_TOOLS and isinstance(path, str):
                     ch["files"][path] = ch["files"].get(path, False) or FILE_TOOLS[name]
                 changed = True
+    elif entry.get("type") == "attachment":
+        if str((entry.get("attachment") or {}).get("content", "")).startswith("[CONTEXT WARNING]"):
+            ch["warned"] = True
     elif entry.get("type") == "user":
         s = block_text(blocks(entry)) if blocks(entry) else (entry.get("message") or {}).get("content") or ""
         if isinstance(s, str) and s.lstrip().startswith("<task-notification>"):
@@ -229,7 +240,7 @@ def save_chapter(con, ch, session_id, project):
               vals["decisions"], vals["files"], plain_line(ch))
     if ch.get("id"):
         con.execute("UPDATE chapters SET branch=?, started_at=?, ended_at=?, prompt=?, replies=?, actions=?, "
-                    "decisions=?, files=?, plain_line=?, revision=revision+1 WHERE id=?", (*common, ch["id"]))
+                    "decisions=?, files=?, plain_line=?, ai_line=NULL, revision=revision+1 WHERE id=?", (*common, ch["id"]))
     else:
         ch["id"] = con.execute("INSERT INTO chapters(branch, started_at, ended_at, prompt, replies, actions, decisions, "
                                "files, plain_line, revision, session_id, project) VALUES (?,?,?,?,?,?,?,?,?,1,?,?)",
@@ -506,6 +517,77 @@ def cmd_rebuild(session_id, all_sessions):
     return "\n".join(out + failed)
 
 
+SUMMARY_MODEL = os.environ.get("CHAPTER_SUMMARY_MODEL", "")
+OLLAMA_URL = os.environ.get("CHAPTER_OLLAMA_URL", "http://127.0.0.1:11434")
+# Wording from the dashboard's card summaries (Multi Agent Dashboard/dashboard.py SUMMARY_PROMPT), same model.
+SUMMARY_PROMPT = ("Read one turn of a coding session and say what work it did.\n\n"
+                  "THEY ASKED: {asked}\nIT REPLIED: {said}\nTOOLS IT RAN: {trail}\n\n"
+                  # older replies open with a free-form length warning; this keeps it out of the summary
+                  "Some replies open with a routine reminder that the conversation is long, suggesting a session "
+                  "handoff or /compact. That reminder is not the work: describe what the user asked for and what "
+                  "was done about it.\n\n"
+                  "One line, at most 20 words, naming what the turn did. Describe the work, not the wording of "
+                  "the reply. No preamble, no quotes.\n\nLINE:")
+
+
+def summarise(chapter_id, revision):
+    """Ask the local model for a one-line summary; write it only if the chapter is still at `revision`.
+    True if written. Every failure is silent: plain_line stays."""
+    if not SUMMARY_MODEL:
+        return False
+    try:
+        con = connect()
+        try:
+            ch = load_chapter(con, chapter_id)
+        finally:
+            con.close()
+        trail = ", ".join(f"{a['tool']} {a['arg']}".strip() for a in ch["actions"])
+        body = json.dumps({"model": SUMMARY_MODEL, "stream": False, "options": {"temperature": 0.2, "num_predict": 60},
+                           "prompt": SUMMARY_PROMPT.format(asked=ch["prompt"][:600], trail=trail[:800] or "none",
+                                                           said="\n".join(ch["replies"])[-2500:])}).encode("utf-8")
+        req = urllib.request.Request(OLLAMA_URL.rstrip("/") + "/api/generate", body, {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            line = (json.loads(r.read()).get("response") or "").strip()
+        if len(line.splitlines()) != 1 or len(line) > 200:
+            return False
+        con = connect()
+        try:  # the revision check makes a stale summary a no-op
+            return con.execute("UPDATE chapters SET ai_line=? WHERE id=? AND revision=?",
+                               (line, chapter_id, revision)).rowcount == 1
+        finally:
+            con.close()
+    except Exception:  # Ollama down or slow, DB locked, chapter gone: not a recording failure, so no log
+        return False
+
+
+def spawn_summaries(written):
+    """Hand each written chapter to a detached `summarise`, so the Stop hook returns at once."""
+    if not SUMMARY_MODEL:
+        return
+    flags = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW} if os.name == "nt"
+             else {"start_new_session": True})  # the one platform-specific call (invariant 6)
+    for cid, rev in written:
+        try:
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "summarise", str(cid), str(rev)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **flags)
+        except Exception:
+            pass
+
+
+def cmd_summarise_missing():
+    """Fill ai_line for chapters that lack one (after import or rebuild), newest first."""
+    if not SUMMARY_MODEL:
+        return "CHAPTER_SUMMARY_MODEL is not set, so there is no model to summarise with."
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        rows = con.execute("SELECT id, revision FROM chapters WHERE ai_line IS NULL ORDER BY id DESC").fetchall()
+    finally:
+        con.close()
+    return f"Summarised {sum(summarise(i, r) for i, r in rows)} of {len(rows)} chapters."
+
+
 def main(argv):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -518,9 +600,11 @@ def main(argv):
         except Exception:
             return
         try:
-            record(payload)
+            written = record(payload)
         except Exception as e:
             log_error(f"record {payload.get('session_id')}: {e!r}")
+            return
+        spawn_summaries(written)
     else:
         ap = argparse.ArgumentParser(prog="chapters.py")
         sub = ap.add_subparsers(dest="cmd", required=True)
@@ -546,10 +630,21 @@ def main(argv):
         g = p.add_mutually_exclusive_group(required=True)
         g.add_argument("session_id", nargs="?")
         g.add_argument("--all", action="store_true")
+        p = sub.add_parser("summarise")
+        g = p.add_mutually_exclusive_group(required=True)
+        g.add_argument("id", type=int, nargs="?")
+        g.add_argument("--missing", action="store_true")
+        p.add_argument("revision", type=int, nargs="?")
         a = ap.parse_args(argv[1:])
         try:
             if a.cmd in ("import", "rebuild"):  # write commands: no warning line
                 print(cmd_import(a.root) if a.cmd == "import" else cmd_rebuild(a.session_id, a.all))
+                return
+            if a.cmd == "summarise":  # detached from record, or --missing by hand: no warning line
+                if a.missing:
+                    print(cmd_summarise_missing())
+                else:
+                    summarise(a.id, a.revision)
                 return
             if a.cmd in ("status", "summary"):  # summary is JSON for programs: no warning line
                 print(cmd_status() if a.cmd == "status" else cmd_summary(a.session_id))

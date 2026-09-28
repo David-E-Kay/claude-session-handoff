@@ -346,4 +346,138 @@ with tempfile.TemporaryDirectory() as tmp:
     finally:
         chapters.DB_PATH, chapters.LOG_PATH, chapters.NOT_PROMPTS = saved
 
+# --- Task 5: the length-warning hook's fixed line is not part of the reply ---
+def hook(content):
+    return {"type": "attachment", "attachment": {"type": "hook_success", "hookEvent": "UserPromptSubmit",
+            "content": content}, "cwd": CWD, "timestamp": TS}
+
+
+WARN = "⚠️ Context check: 150k tokens used. Consider running a session handoff, then /compact or a fresh session."
+chs = []
+for e in (user("warned ask"), hook("[CONTEXT WARNING] Context is at 150k"), asst(text(WARN + "\n\nReal answer. More.")),
+          asst(text(WARN + "\n\nSecond.")),
+          user("unwarned ask"), asst(text(WARN + "\n\nKept: no hook fired.")),
+          user("warned, reworded"), hook("[CONTEXT WARNING] Context is at 160k"), asst(text("Heads up, long chat.\n\nX.")),
+          user("other hook"), hook("[PROSE STYLE] ..."), asst(text(WARN + "\n\nY."))):
+    chapters.feed(chs, e)
+assert chs[0]["replies"][0] == "Real answer. More.", chs[0]["replies"]
+assert chs[0]["replies"][1:] == [WARN + "\n\nSecond."], "only the first reply after the hook is trimmed"
+assert chs[1]["replies"] == [WARN + "\n\nKept: no hook fired."], "no hook, no trim"
+assert chs[2]["replies"] == ["Heads up, long chat.\n\nX."], "hook fired but no fixed line: nothing removed"
+assert chs[3]["replies"][0].startswith(WARN), "a different hook does not count"
+chs = []
+for e in (user("only the warning"), hook("[CONTEXT WARNING] x"), asst(text(WARN)), asst(text("Done."))):
+    chapters.feed(chs, e)
+assert chs[0]["replies"] == ["Done."], chs[0]["replies"]
+
+# --- Task 5: Ollama summary lines ---
+import http.server  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+
+class Stub(http.server.BaseHTTPRequestHandler):
+    answer, delay, bodies, during = "Added the import command", 0, [], None
+
+    def do_POST(self):
+        Stub.bodies.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        time.sleep(Stub.delay)
+        if Stub.during:
+            Stub.during()
+        out = json.dumps({"response": Stub.answer}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+STUB = f"http://127.0.0.1:{srv.server_port}"
+
+
+def ai(db, cid):
+    con = sqlite3.connect(db)
+    try:
+        return con.execute("SELECT ai_line FROM chapters WHERE id=?", (cid,)).fetchone()[0]
+    finally:
+        con.close()
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    db, tr = tmp / "idx.db", tmp / "s5.jsonl"
+    write_lines(tr, [user("summarise me"), asst(text("x " * 5000), tool("t1", "Edit", file_path="a.py")),
+                     user("second"), asst(text("B."))])
+    saved = chapters.DB_PATH, chapters.LOG_PATH, chapters.SUMMARY_MODEL, chapters.OLLAMA_URL
+    chapters.DB_PATH, chapters.LOG_PATH = db, tmp / "chapter-index.log"  # never the real DB
+    chapters.OLLAMA_URL = STUB
+    try:
+        (c1, r1), (c2, r2) = chapters.record({"session_id": "s5", "transcript_path": str(tr)})
+        chapters.SUMMARY_MODEL = ""  # invariant 5: no model, no request
+        assert chapters.summarise(c1, r1) is False and not Stub.bodies and ai(db, c1) is None
+        chapters.SUMMARY_MODEL = "m"
+        for bad in ("two\nlines", "  ", "x" * 201):
+            Stub.answer = bad
+            assert chapters.summarise(c1, r1) is False and ai(db, c1) is None, f"rejected: {bad[:10]!r}"
+        Stub.answer = "  Added the import command \n"
+        assert chapters.summarise(c1, r1 - 1) is False and ai(db, c1) is None, "stale revision never written"
+
+        def grow():  # the chapter gets a new revision while the model is still answering
+            con = sqlite3.connect(db)
+            with con:
+                con.execute("UPDATE chapters SET revision=revision+1 WHERE id=?", (c1,))
+            con.close()
+        Stub.during = grow
+        assert chapters.summarise(c1, r1) is False and ai(db, c1) is None, "revision moved during the call"
+        Stub.during, r1 = None, r1 + 1
+        assert chapters.summarise(c1, r1) is True and ai(db, c1) == "Added the import command"
+        b = Stub.bodies[-1]
+        assert b["model"] == "m" and b["stream"] is False and "summarise me" in b["prompt"] and "Edit a.py" in b["prompt"], b
+        assert "routine reminder" in b["prompt"], "the model is told the length warning is not the work"
+        assert len(b["prompt"]) <= 4500, len(b["prompt"])  # ~4000-char cap on what is sent
+        chapters.OLLAMA_URL = "http://127.0.0.1:9"  # nothing listens: silent failure, plain_line stays
+        assert chapters.summarise(c2, r2) is False and ai(db, c2) is None
+        assert not (tmp / "chapter-index.log").exists(), "a summary failure is not a recording failure"
+        chapters.OLLAMA_URL = STUB
+        assert chapters.cmd_summarise_missing() == "Summarised 1 of 1 chapters.", "fills only lines still missing"
+        assert ai(db, c2) == "Added the import command"
+        con = sqlite3.connect(db)
+        with con:  # a chapter that grows gets a new revision; its old ai_line no longer describes it
+            con.execute("UPDATE chapters SET ai_line='old' WHERE id=?", (c2,))
+        con.close()
+        write_lines(tr, [asst(text("C."))], mode="a")
+        assert chapters.record({"session_id": "s5", "transcript_path": str(tr)})[0][0] == c2
+        assert ai(db, c2) is None, "growth clears the stale ai_line"
+    finally:
+        chapters.DB_PATH, chapters.LOG_PATH, chapters.SUMMARY_MODEL, chapters.OLLAMA_URL = saved
+
+    # end to end: the Stop hook returns at once and a detached process writes ai_line later
+    env = {**os.environ, "CHAPTER_INDEX_DB": str(db), "CHAPTER_OLLAMA_URL": STUB}
+    env.pop("CHAPTER_SUMMARY_MODEL", None)
+    Stub.bodies.clear()
+    write_lines(tr, [user("third, no model"), asst(text("D."))], mode="a")
+    r = run("record", payload={"session_id": "s5", "transcript_path": str(tr)}, env=env)
+    assert r.returncode == 0 and r.stdout == "", r
+    con = sqlite3.connect(db)
+    c3 = con.execute("SELECT MAX(id) FROM chapters").fetchone()[0]
+    con.close()
+    Stub.answer, Stub.delay = "Ran the fourth step", 3
+    write_lines(tr, [user("fourth"), asst(text("E."))], mode="a")
+    t0 = time.time()
+    r = run("record", payload={"session_id": "s5", "transcript_path": str(tr)}, env={**env, "CHAPTER_SUMMARY_MODEL": "m"})
+    assert r.returncode == 0 and r.stdout == "" and time.time() - t0 < 2.5, (r, time.time() - t0)  # never waits on Ollama
+    c4 = c3 + 1
+    for _ in range(100):
+        if ai(db, c4):
+            break
+        time.sleep(0.1)
+    assert ai(db, c4) == "Ran the fourth step", "detached summarise wrote the line"
+    assert ai(db, c3) is None and len(Stub.bodies) == 1, "no model set: nothing was asked"
+    Stub.delay = 0
+srv.shutdown()
+
 print("ok")
