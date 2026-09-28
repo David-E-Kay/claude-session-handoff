@@ -1990,10 +1990,10 @@ line 3; "To look something up" bullet in "When to invoke"); create `skills/resum
   Replace the closing guard
   `Do NOT invoke the reading or lookup half merely because a request resembles earlier work in this repo — both require the user to ask.`
   with
-  `Do NOT invoke either half merely because a request resembles earlier work in this repo — reading requires the user to ask, and lookup requires the user to ask or a specific fact you can name that is missing.`
+  `Do NOT invoke reading or lookup merely because a request resembles earlier work in this repo — reading requires the user to ask, and lookup requires the user to ask or a specific fact you can name that is missing.`
   Check afterwards: the description value contains no `: ` and no ` #` (Task 6 finding — either breaks loading).
 - [ ] **Step 3: SKILL.md "To look something up" bullet.** Append:
-  `Also use it when you yourself need a specific fact about earlier work to continue (why something was decided, what an earlier run returned) and it is in neither the handoff nor memory. Name the missing fact first; if you can't name it, don't look.`
+  `Exception: also use it when you yourself need a specific fact about earlier work to continue (why something was decided, what an earlier run returned) and it is in neither the handoff nor memory. Name the missing fact first; if you can't name it, don't look.`
 - [ ] **Step 4: create `skills/resume-work/SKILL.md`.**
   ```
   ---
@@ -2010,7 +2010,7 @@ line 3; "To look something up" bullet in "When to invoke"); create `skills/resum
   context). **Verify at implementation** that Claude Code honours this key for skills; if not, drop it and
   keep the description free of `: `.
 - [ ] **Step 5: README.** Install step 1 also copies `skills/resume-work`. Usage, "Starting the next one":
-  add `Or type **/resume-work**, which always runs the reading half.` Asking-about-earlier-work paragraph:
+  add `Or type **/resume-work**, which always loads the last handoff.` Asking-about-earlier-work paragraph:
   add one sentence that Claude may also look something up on its own when it needs a specific past fact
   to continue, and tells you which chapter it used.
 - [ ] **Step 6: Verify.** Description checks from Step 2 for both skills; `git diff --check`; both test
@@ -2023,7 +2023,7 @@ line 3; "To look something up" bullet in "When to invoke"); create `skills/resum
 ### Task 7: Install on David's machine — PROVISIONAL, approval required
 
 Also install `skills/resume-work/`. Live checks carried from Tasks 6 and 6a: settings.json `"env"` reaches the
-Stop hook; the session-handoff description loads in full; `/resume-work` loads the newest handoff.
+Stop hook; the session-handoff description loads in full (its last sentence, the "Do NOT invoke…" guard, must be visible — the listing cuts descriptions at 1,536 characters and this one is ~1,400); `/resume-work` loads the newest handoff.
 
 Copy `chapters.py` and the updated SKILL.md into `~/.claude/`, add the Stop hook entry to
 `~/.claude/settings.json` alongside `handoff-save.py`, run the import, set

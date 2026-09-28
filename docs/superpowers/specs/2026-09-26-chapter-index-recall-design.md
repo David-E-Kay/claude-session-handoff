@@ -234,6 +234,7 @@ prints a one-line warning first.
 - Frontmatter trigger widens from "explicitly asks to resume" to also cover the
   user explicitly asking about earlier work ("what did we decide about X last
   week"). Still tied to the user asking — never fired by topic similarity.
+  Amended 2026-09-28 (David): the lookup half may also start when Claude itself needs a specific, nameable fact about earlier work to continue and it is in neither the handoff nor the memory topic files. Resemblance to earlier work still never triggers it.
 - New rule in "Reading a handoff in a fresh session":
   - Go below the handoff only when a needed fact is missing from both the
     handoff and the memory topic files.

@@ -2,7 +2,7 @@
 
 A Claude Code skill + hook pair for wrapping up a session cleanly before you `/clear` or run out of context — and picking it back up in the next one.
 
-- **`skills/session-handoff/SKILL.md`** — runs in two directions, plus lookup. **Writing:** produces a structured handoff summary (decisions, key files, running state, verification steps, open questions) and stores it in the repo's project memory directory, so there's nothing to copy-paste. **Reading:** when you explicitly ask to resume, loads that stored handoff back into a fresh session. **Lookup:** when you ask about earlier work and the handoff doesn't have the answer, looks it up in the chapter index.
+- **`skills/session-handoff/SKILL.md`** — runs in two directions, plus lookup. **Writing:** produces a structured handoff summary (decisions, key files, running state, verification steps, open questions) and stores it in the repo's project memory directory, so there's nothing to copy-paste. **Reading:** when you explicitly ask to resume, loads that stored handoff back into a fresh session. **Lookup:** when you ask about earlier work (or Claude needs a specific past fact to continue) and the handoff doesn't have the answer, looks it up in the chapter index.
 - **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that watches token usage and nudges you to run the handoff skill once you cross 120k tokens, before context quality degrades.
 - **`hooks/handoff-save.py`** — a `Stop` hook that does the saving. The skill has Claude print the handoff once in chat; when that reply finishes, the hook writes it to project memory and updates the index. No extra model steps, so a handoff costs one reply instead of four or five. **Required** for the skill to save anything.
 - **`hooks/chapters.py`** — an optional `Stop` hook that records every session, reply by reply, into a small local database (the *chapter index*). When a handoff leaves out a detail you later need, Claude can look it up there, one step at a time. It never runs a model unless you turn on the optional local summaries. See [The chapter index](#the-chapter-index).
@@ -12,9 +12,10 @@ They work together but none require each other: the skill can be triggered manua
 
 ## Install
 
-1. **Copy the skill:**
+1. **Copy the skills:**
    ```
    cp -r skills/session-handoff ~/.claude/skills/session-handoff
+   cp -r skills/resume-work ~/.claude/skills/resume-work
    ```
 
 2. **Copy the hooks:**
@@ -79,7 +80,7 @@ They work together but none require each other: the skill can be triggered manua
 
 5. **Allow the lookups without a prompt each time** (optional): add `"Bash(python ~/.claude/hooks/chapters.py:*)"` to `permissions.allow` in `~/.claude/settings.json`. This rule covers only this script, never `python` in general. Keep the `~` form even on Windows: the rule matches the command text Claude runs, which is written that way in the skill.
 
-6. Restart/start a new Claude Code session for the hooks and skill to take effect.
+6. Restart/start a new Claude Code session for the hooks and skills to take effect.
 
 ## Usage
 
@@ -89,9 +90,9 @@ Two phrases, one loop.
 
 Run it whenever the next thing you'd do is `/clear`, `/compact`, or close the window — and whenever the context hook nudges you at 120k. Running it more than once per session is fine.
 
-**Starting the next one** — say **"resume from before"** (or "resume", "pick up where we left off", "continue from last time", "catch me up", "where did we leave off", "load the last handoff"). The skill reads the newest stored handoff, opens the files it names, and tells you where to pick up.
+**Starting the next one** — say **"resume from before"** (or "resume", "pick up where we left off", "continue from last time", "catch me up", "where did we leave off", "load the last handoff"). The skill reads the newest stored handoff, opens the files it names, and tells you where to pick up. Or type **/resume-work**, which always loads the last handoff.
 
-**Asking about earlier work** — ask plainly: "what did we decide about the database last week?", "what was the error when we tried the import?". Claude checks the handoff and memory first. Only if the answer isn't there does it look in the chapter index, one step at a time, and it tells you which chapter the answer came from.
+**Asking about earlier work** — ask plainly: "what did we decide about the database last week?", "what was the error when we tried the import?". Claude checks the handoff and memory first. Only if the answer isn't there does it look in the chapter index, one step at a time, and it tells you which chapter the answer came from. Claude may also look something up on its own when it needs a specific past fact to continue, and it tells you which chapter it used.
 
 Start unrelated work in the same repo and you say neither — nothing stale loads. See [How handoffs persist across sessions](#how-handoffs-persist-across-sessions) for why that's a phrasing decision rather than a judgment call.
 
