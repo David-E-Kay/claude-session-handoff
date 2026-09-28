@@ -1394,21 +1394,418 @@ git add hooks/chapters.py hooks/test_chapters.py
 git commit -m "Add one-time import and rebuild of past sessions"
 ```
 
-### Task 5: Optional Ollama summary lines — PROVISIONAL
+### Task 5: Optional Ollama summary lines
 
-Purpose: clearer one-line summaries from a local model, never slowing a reply. Protects: list readability.
-Evidence from the Task 3 smoke run (2026-09-27): the free `plain_line` takes the first sentence of the last
-reply, and on real sessions that was often boilerplate — the "conversation is getting long" nudge, or the
-handoff's `<!-- handoff-memory-dir` marker — so this task matters more than the spec assumed. Whether
-`plain_line` should also skip such lines is a question for David, not decided here.
+**Status:** detail written 2026-09-28 against the tree at `1d974c3` and verified in a scratch copy: RED seen
+(`AttributeError: module 'chapters' has no attribute 'SUMMARY_MODEL'`), GREEN seen, all seven mutations below
+caught by their intended assertion. Extended the same day at David's request (length-warning hook, see
+decisions 7-8): RED seen again, 12/12 mutations caught. Smoke run against a temp DB: 255 real transcripts → 1171 chapters; the real
+`qwen2.5:1.5b-instruct` summarised the 12 newest in 6.0 s (12/12 accepted, so `summarise --missing` over
+everything is roughly 10 minutes); the real `~/.claude/chapter-index.db` was never created.
 
-Depends on: Task 2's `record` returning `(id, revision)` pairs. Approach per spec Part 3:
-`CHAPTER_SUMMARY_MODEL` / `CHAPTER_OLLAMA_URL`; `record` spawns a detached `summarise` process; revision check
-prevents stale overwrites; `--missing` mode for after import. The prompt asks for a line that reads well as a
-dashboard card (what the turn did, not how the reply phrased it); `summary SESSION_ID` from Task 3 is already
-the read path. Test with a local stub HTTP server (stdlib `http.server`) returning good / multi-line / empty /
-over-long answers. Rough files: `hooks/chapters.py`, `hooks/test_chapters.py`. Detail to be written just
-before this task starts — in particular how the test waits for a detached process.
+Purpose: a clearer one-line summary per chapter from a local model, never slowing a reply (spec Part 3,
+case 7). Protects: list readability, and the dashboard's future reuse through `summary SESSION_ID`.
+
+**Files:**
+- Modify: `hooks/chapters.py` (two imports; `save_chapter`'s UPDATE; add `SUMMARY_MODEL`, `OLLAMA_URL`, `SUMMARY_PROMPT`, `summarise`, `spawn_summaries`, `cmd_summarise_missing` just above `main`; extend `main`)
+- Modify: `hooks/test_chapters.py` (two Task 5 sections before the final `print("ok")`)
+- Modify: `hooks/context-threshold-warn.py` — **already done by the controller** with David's approval
+  (2026-09-28), both in the repo and in `~/.claude/hooks/`: the hook now dictates a fixed opening line and
+  prints UTF-8. The implementer does not touch it; it is committed with this task.
+- Modify (also in `hooks/chapters.py`): `WARN_LINE` after `DECISION_CAP`; `feed`'s assistant-text branch; a new
+  `attachment` branch in `feed`
+
+**Interfaces:**
+- Consumes (verified at `1d974c3`): `record(payload, reset=False) -> [(chapter_id, revision)]` (chapters.py:247), `save_chapter` (:226, the UPDATE string at :231-232), `connect()` (:176), `load_chapter(con, chapter_id)` (:200, returns a dict with JSON columns decoded, including `revision`), `open_ro()`, `NOTHING`, `DB_PATH`, `LOG_PATH`; the `record` branch of `main` (:515-523) and the lookup `try:` (:550); test helpers `run`, `write_lines`, `user`, `asst`, `text`, `tool`; `sqlite3`, `tempfile`, `os`, `json` already imported in the test file.
+- Produces:
+  - `SUMMARY_MODEL` (env `CHAPTER_SUMMARY_MODEL`, default `""` = off), `OLLAMA_URL` (env `CHAPTER_OLLAMA_URL`, default `http://127.0.0.1:11434`) — module-level, like `DB_PATH`, so tests patch them the same way.
+  - `summarise(chapter_id, revision) -> bool` — True only if `ai_line` was written. Never raises, never logs.
+  - `spawn_summaries(written)` — one detached `chapters.py summarise ID REVISION` per pair; no-op when `SUMMARY_MODEL` is unset. Never raises.
+  - `cmd_summarise_missing() -> str` — `Summarised N of M chapters.`; `NOTHING` if no DB; a plain sentence if no model is set.
+  - `save_chapter`'s UPDATE now also sets `ai_line=NULL`.
+  - `feed`: an `attachment` line whose content starts `[CONTEXT WARNING]` marks the open chapter; the next text
+    reply in it has a leading `WARN_LINE` match removed (and is dropped if nothing is left). Only that one reply.
+  - CLI: `summarise (ID REVISION | --missing)`. No warning line. `summarise ID REVISION` prints nothing.
+
+Decisions taken while detailing (for Gate 1):
+1. **Default URL is `127.0.0.1`, not the spec's `localhost`.** Measured on David's machine: every request to
+   `localhost:11434` takes 2.06 s longer than to `127.0.0.1:11434` (Windows tries IPv6 `::1` first; Ollama
+   listens on IPv4 only). That is +40 min across a `--missing` back-fill. The dashboard already uses
+   `127.0.0.1` (`Multi Agent Dashboard/dashboard.py:117`).
+2. **A chapter that grows clears its `ai_line`.** The spec says the line is "written once per chapter
+   revision"; without clearing, a grown chapter keeps a summary of its earlier part forever if Ollama is down,
+   and `--missing` never refreshes it. Cost: `list` shows the plain line for the few seconds until the new summary
+   lands.
+3. **Only the Stop hook spawns.** `import` and `rebuild` never spawn (1171 chapters would mean 1171
+   processes); they rely on `summarise --missing`, run by hand.
+4. **The stale guard is the UPDATE itself** (`WHERE id=? AND revision=?`). An earlier draft also checked the
+   revision before calling the model; its mutation was not caught because the UPDATE covers it, so it was
+   removed rather than tested.
+5. **Prompt wording reused from the dashboard** (`dashboard.py:516-524`, same model), widened from one reply to
+   a whole turn: prompt ≤600 chars, the *last* 2500 chars of the replies (where the outcome is), tool trail
+   ≤800. `temperature 0.2`, `num_predict 60`, 60 s timeout. Acceptance per spec: after trimming, exactly one
+   line, 1–200 chars. The dashboard's extra preamble-stripping (`clean_summary`) is not copied: on the 12-chapter
+   smoke run the only tic was a leading "Worked on…", which is harmless.
+6. **Failures are silent, not logged.** Logging would trip the "recording has failed" warning line, and a
+   summary failure is not a recording failure (asserted).
+
+Known ceilings (not fixed here):
+- A spawned `summarise` may be killed if Claude Code itself exits within a few seconds of a reply. Unverified:
+  Node on Windows can place child processes in a job object that is closed with it. The chapter just keeps its plain line until `--missing`. Check that
+  summaries appear at all under the real hook in Task 7.
+- Several chapters written by one Stop spawn several processes at once, so parallel Ollama calls. Rare (one
+  Stop almost always writes one chapter).
+- Boilerplate in replies also reaches the model: on the smoke run, chapter #1160's last reply was the
+  "conversation is very long" nudge and the model summarised the nudge. See the open question below.
+
+7. **The length warning is dropped by two signals together, not by wording** (David, 2026-09-28). The nudge
+   comes from `context-threshold-warn.py`, and every firing is recorded in the transcript as an `attachment`
+   line (`hook_success`, content `[CONTEXT WARNING] ...`) — 616 lines across 174 real transcripts. Wording
+   filters failed on those 612 warned turns: "first paragraph mentions handoff" also deleted real content in
+   sessions *about* handoffs; the tighter "handoff + /compact or fresh session" missed over half and still
+   deleted one real paragraph. So the hook now dictates an exact line (`⚠️ Context check: Nk tokens used.
+   Consider running a session handoff, then /compact or a fresh session.`), and `feed` removes it only when the
+   hook fired in that turn *and* the first reply opens with it. Stored `replies` lose the line, so `show` does
+   not display it. The hook also gained `sys.stdout.reconfigure(encoding="utf-8")`: without it, piped output on
+   Windows is cp1252, the emoji raises, and the hook's own `except` swallowed the whole warning (0 bytes, seen).
+8. **Past chapters get guidance, not a filter** (David, 2026-09-28). Their warnings are free-form, so the
+   summary prompt gains one sentence telling the model the reminder is not the work. Evaluated on 12 real
+   warned chapters and 6 real handoff chapters, old prompt vs new: it fixed the 2 summaries the warning had
+   taken over ("Ran a session handoff and compacted…", "…Finished session handoff"), made 1 vaguer ("confirming
+   the context and handling the situation appropriately"), and the rest were similar; real handoff turns were
+   vague before and after. `plain_line` for past chapters is unchanged: 80 of 1171 (7%) keep the boilerplate.
+
+Not covered: the sibling `context-threshold-handoff-task.py` (PreToolUse, fires between delegated tasks, not
+at the top of a reply) still leaves its wording to Claude. Rare; left alone.
+
+- [ ] **Step 1: Write the failing test**
+
+Insert before the final `print("ok")` in `hooks/test_chapters.py`:
+
+```python
+# --- Task 5: the length-warning hook's fixed line is not part of the reply ---
+def hook(content):
+    return {"type": "attachment", "attachment": {"type": "hook_success", "hookEvent": "UserPromptSubmit",
+            "content": content}, "cwd": CWD, "timestamp": TS}
+
+
+WARN = "⚠️ Context check: 150k tokens used. Consider running a session handoff, then /compact or a fresh session."
+chs = []
+for e in (user("warned ask"), hook("[CONTEXT WARNING] Context is at 150k"), asst(text(WARN + "\n\nReal answer. More.")),
+          asst(text(WARN + "\n\nSecond.")),
+          user("unwarned ask"), asst(text(WARN + "\n\nKept: no hook fired.")),
+          user("warned, reworded"), hook("[CONTEXT WARNING] Context is at 160k"), asst(text("Heads up, long chat.\n\nX.")),
+          user("other hook"), hook("[PROSE STYLE] ..."), asst(text(WARN + "\n\nY."))):
+    chapters.feed(chs, e)
+assert chs[0]["replies"][0] == "Real answer. More.", chs[0]["replies"]
+assert chs[0]["replies"][1:] == [WARN + "\n\nSecond."], "only the first reply after the hook is trimmed"
+assert chs[1]["replies"] == [WARN + "\n\nKept: no hook fired."], "no hook, no trim"
+assert chs[2]["replies"] == ["Heads up, long chat.\n\nX."], "hook fired but no fixed line: nothing removed"
+assert chs[3]["replies"][0].startswith(WARN), "a different hook does not count"
+chs = []
+for e in (user("only the warning"), hook("[CONTEXT WARNING] x"), asst(text(WARN)), asst(text("Done."))):
+    chapters.feed(chs, e)
+assert chs[0]["replies"] == ["Done."], chs[0]["replies"]
+
+# --- Task 5: Ollama summary lines ---
+import http.server  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+
+class Stub(http.server.BaseHTTPRequestHandler):
+    answer, delay, bodies, during = "Added the import command", 0, [], None
+
+    def do_POST(self):
+        Stub.bodies.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        time.sleep(Stub.delay)
+        if Stub.during:
+            Stub.during()
+        out = json.dumps({"response": Stub.answer}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+STUB = f"http://127.0.0.1:{srv.server_port}"
+
+
+def ai(db, cid):
+    con = sqlite3.connect(db)
+    try:
+        return con.execute("SELECT ai_line FROM chapters WHERE id=?", (cid,)).fetchone()[0]
+    finally:
+        con.close()
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    db, tr = tmp / "idx.db", tmp / "s5.jsonl"
+    write_lines(tr, [user("summarise me"), asst(text("x " * 5000), tool("t1", "Edit", file_path="a.py")),
+                     user("second"), asst(text("B."))])
+    saved = chapters.DB_PATH, chapters.LOG_PATH, chapters.SUMMARY_MODEL, chapters.OLLAMA_URL
+    chapters.DB_PATH, chapters.LOG_PATH = db, tmp / "chapter-index.log"  # never the real DB
+    chapters.OLLAMA_URL = STUB
+    try:
+        (c1, r1), (c2, r2) = chapters.record({"session_id": "s5", "transcript_path": str(tr)})
+        chapters.SUMMARY_MODEL = ""  # invariant 5: no model, no request
+        assert chapters.summarise(c1, r1) is False and not Stub.bodies and ai(db, c1) is None
+        chapters.SUMMARY_MODEL = "m"
+        for bad in ("two\nlines", "  ", "x" * 201):
+            Stub.answer = bad
+            assert chapters.summarise(c1, r1) is False and ai(db, c1) is None, f"rejected: {bad[:10]!r}"
+        Stub.answer = "  Added the import command \n"
+        assert chapters.summarise(c1, r1 - 1) is False and ai(db, c1) is None, "stale revision never written"
+
+        def grow():  # the chapter gets a new revision while the model is still answering
+            con = sqlite3.connect(db)
+            with con:
+                con.execute("UPDATE chapters SET revision=revision+1 WHERE id=?", (c1,))
+            con.close()
+        Stub.during = grow
+        assert chapters.summarise(c1, r1) is False and ai(db, c1) is None, "revision moved during the call"
+        Stub.during, r1 = None, r1 + 1
+        assert chapters.summarise(c1, r1) is True and ai(db, c1) == "Added the import command"
+        b = Stub.bodies[-1]
+        assert b["model"] == "m" and b["stream"] is False and "summarise me" in b["prompt"] and "Edit a.py" in b["prompt"], b
+        assert "routine reminder" in b["prompt"], "the model is told the length warning is not the work"
+        assert len(b["prompt"]) <= 4500, len(b["prompt"])  # ~4000-char cap on what is sent
+        chapters.OLLAMA_URL = "http://127.0.0.1:9"  # nothing listens: silent failure, plain_line stays
+        assert chapters.summarise(c2, r2) is False and ai(db, c2) is None
+        assert not (tmp / "chapter-index.log").exists(), "a summary failure is not a recording failure"
+        chapters.OLLAMA_URL = STUB
+        assert chapters.cmd_summarise_missing() == "Summarised 1 of 1 chapters.", "fills only lines still missing"
+        assert ai(db, c2) == "Added the import command"
+        con = sqlite3.connect(db)
+        with con:  # a chapter that grows gets a new revision; its old ai_line no longer describes it
+            con.execute("UPDATE chapters SET ai_line='old' WHERE id=?", (c2,))
+        con.close()
+        write_lines(tr, [asst(text("C."))], mode="a")
+        assert chapters.record({"session_id": "s5", "transcript_path": str(tr)})[0][0] == c2
+        assert ai(db, c2) is None, "growth clears the stale ai_line"
+    finally:
+        chapters.DB_PATH, chapters.LOG_PATH, chapters.SUMMARY_MODEL, chapters.OLLAMA_URL = saved
+
+    # end to end: the Stop hook returns at once and a detached process writes ai_line later
+    env = {**os.environ, "CHAPTER_INDEX_DB": str(db), "CHAPTER_OLLAMA_URL": STUB}
+    env.pop("CHAPTER_SUMMARY_MODEL", None)
+    Stub.bodies.clear()
+    write_lines(tr, [user("third, no model"), asst(text("D."))], mode="a")
+    r = run("record", payload={"session_id": "s5", "transcript_path": str(tr)}, env=env)
+    assert r.returncode == 0 and r.stdout == "", r
+    con = sqlite3.connect(db)
+    c3 = con.execute("SELECT MAX(id) FROM chapters").fetchone()[0]
+    con.close()
+    Stub.answer, Stub.delay = "Ran the fourth step", 3
+    write_lines(tr, [user("fourth"), asst(text("E."))], mode="a")
+    t0 = time.time()
+    r = run("record", payload={"session_id": "s5", "transcript_path": str(tr)}, env={**env, "CHAPTER_SUMMARY_MODEL": "m"})
+    assert r.returncode == 0 and r.stdout == "" and time.time() - t0 < 2.5, (r, time.time() - t0)  # never waits on Ollama
+    c4 = c3 + 1
+    for _ in range(100):
+        if ai(db, c4):
+            break
+        time.sleep(0.1)
+    assert ai(db, c4) == "Ran the fourth step", "detached summarise wrote the line"
+    assert ai(db, c3) is None and len(Stub.bodies) == 1, "no model set: nothing was asked"
+    Stub.delay = 0
+srv.shutdown()
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `python hooks/test_chapters.py`
+Expected: `AssertionError` on the first hook-line assert (the warning line is still in `replies`). With
+that section alone passing, the next RED is `AttributeError: module 'chapters' has no attribute 'SUMMARY_MODEL'`.
+
+- [ ] **Step 3: Implement**
+
+Imports: add `import subprocess` after `import sqlite3` and `import urllib.request` after `import sys`.
+
+After `DECISION_CAP = 500`:
+
+```python
+# The fixed opening line ~/.claude/hooks/context-threshold-warn.py asks for; keep the two in sync.
+WARN_LINE = re.compile(r"\A\W*Context check:[^\n]*\n*")
+```
+
+In `feed`, the assistant `text` branch becomes:
+
+```python
+            if b.get("type") == "text" and b.get("text", "").strip():
+                t = b["text"].strip()
+                if ch.pop("warned", False):  # the length-warning hook fired: its fixed line is not the work
+                    t = WARN_LINE.sub("", t, count=1).strip()
+                if t:
+                    ch["replies"].append(t)
+                    changed = True
+```
+
+and directly before `    elif entry.get("type") == "user":` add:
+
+```python
+    elif entry.get("type") == "attachment":
+        if str((entry.get("attachment") or {}).get("content", "")).startswith("[CONTEXT WARNING]"):
+            ch["warned"] = True
+```
+
+In `save_chapter`'s UPDATE string, `plain_line=?, revision=revision+1` becomes
+`plain_line=?, ai_line=NULL, revision=revision+1`.
+
+Just above `def main(argv):`:
+
+```python
+SUMMARY_MODEL = os.environ.get("CHAPTER_SUMMARY_MODEL", "")
+OLLAMA_URL = os.environ.get("CHAPTER_OLLAMA_URL", "http://127.0.0.1:11434")
+# Wording from the dashboard's card summaries (Multi Agent Dashboard/dashboard.py SUMMARY_PROMPT), same model.
+SUMMARY_PROMPT = ("Read one turn of a coding session and say what work it did.\n\n"
+                  "THEY ASKED: {asked}\nIT REPLIED: {said}\nTOOLS IT RAN: {trail}\n\n"
+                  # older replies open with a free-form length warning; this keeps it out of the summary
+                  "Some replies open with a routine reminder that the conversation is long, suggesting a session "
+                  "handoff or /compact. That reminder is not the work: describe what the user asked for and what "
+                  "was done about it.\n\n"
+                  "One line, at most 20 words, naming what the turn did. Describe the work, not the wording of "
+                  "the reply. No preamble, no quotes.\n\nLINE:")
+
+
+def summarise(chapter_id, revision):
+    """Ask the local model for a one-line summary; write it only if the chapter is still at `revision`.
+    True if written. Every failure is silent: plain_line stays."""
+    if not SUMMARY_MODEL:
+        return False
+    try:
+        con = connect()
+        try:
+            ch = load_chapter(con, chapter_id)
+        finally:
+            con.close()
+        trail = ", ".join(f"{a['tool']} {a['arg']}".strip() for a in ch["actions"])
+        body = json.dumps({"model": SUMMARY_MODEL, "stream": False, "options": {"temperature": 0.2, "num_predict": 60},
+                           "prompt": SUMMARY_PROMPT.format(asked=ch["prompt"][:600], trail=trail[:800] or "none",
+                                                           said="\n".join(ch["replies"])[-2500:])}).encode("utf-8")
+        req = urllib.request.Request(OLLAMA_URL.rstrip("/") + "/api/generate", body, {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            line = (json.loads(r.read()).get("response") or "").strip()
+        if len(line.splitlines()) != 1 or len(line) > 200:
+            return False
+        con = connect()
+        try:  # the revision check makes a stale summary a no-op
+            return con.execute("UPDATE chapters SET ai_line=? WHERE id=? AND revision=?",
+                               (line, chapter_id, revision)).rowcount == 1
+        finally:
+            con.close()
+    except Exception:  # Ollama down or slow, DB locked, chapter gone: not a recording failure, so no log
+        return False
+
+
+def spawn_summaries(written):
+    """Hand each written chapter to a detached `summarise`, so the Stop hook returns at once."""
+    if not SUMMARY_MODEL:
+        return
+    flags = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW} if os.name == "nt"
+             else {"start_new_session": True})  # the one platform-specific call (invariant 6)
+    for cid, rev in written:
+        try:
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "summarise", str(cid), str(rev)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **flags)
+        except Exception:
+            pass
+
+
+def cmd_summarise_missing():
+    """Fill ai_line for chapters that lack one (after import or rebuild), newest first."""
+    if not SUMMARY_MODEL:
+        return "CHAPTER_SUMMARY_MODEL is not set, so there is no model to summarise with."
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        rows = con.execute("SELECT id, revision FROM chapters WHERE ai_line IS NULL ORDER BY id DESC").fetchall()
+    finally:
+        con.close()
+    return f"Summarised {sum(summarise(i, r) for i, r in rows)} of {len(rows)} chapters."
+```
+
+In `main`'s `record` branch, the inner `try` becomes:
+
+```python
+        try:
+            written = record(payload)
+        except Exception as e:
+            log_error(f"record {payload.get('session_id')}: {e!r}")
+            return
+        spawn_summaries(written)
+```
+
+After the `rebuild` subparser:
+
+```python
+        p = sub.add_parser("summarise")
+        g = p.add_mutually_exclusive_group(required=True)
+        g.add_argument("id", type=int, nargs="?")
+        g.add_argument("--missing", action="store_true")
+        p.add_argument("revision", type=int, nargs="?")
+```
+
+and inside the lookup `try:`, directly before `if a.cmd in ("status", "summary"):`:
+
+```python
+            if a.cmd == "summarise":  # detached from record, or --missing by hand: no warning line
+                if a.missing:
+                    print(cmd_summarise_missing())
+                else:
+                    summarise(a.id, a.revision)
+                return
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `python hooks/test_chapters.py` → `ok` (about 13 s: the refused-connection case costs ~2 s on Windows and
+the end-to-end stub waits 3 s); `python hooks/test_handoff_save.py` → `ok`.
+
+- [ ] **Step 5: Prove the test can fail**
+
+Twelve mutations, each from a `.bak` copy and restored from it; expected failing assertion in brackets:
+1. UPDATE `WHERE id=? AND revision=?` → `WHERE id=?` (drop `revision` from the arguments) [stale revision never written]
+2. Drop `ai_line=NULL, ` from `save_chapter` [growth clears the stale ai_line]
+3. `len(line.splitlines()) != 1` → `< 1` [rejected: 'two\nlines']
+4. `len(line) > 200` → `> 300` [rejected: 'xxxxxxxxxx']
+5. Delete `if not SUMMARY_MODEL: return False` in `summarise` [the bare assert after `invariant 5`]
+6. Replace `spawn_summaries(written)` in `main` with `[summarise(*w) for w in written]` [the `never waits on Ollama` assert]
+7. Replace `subprocess.Popen(` with `(lambda *a, **k: None)(` [detached summarise wrote the line]
+8. `ch["warned"] = True` → `pass` [the first hook-line assert, showing the warning still in `replies`]
+9. `ch.pop("warned", False)` → `ch.get("warned", False)` [only the first reply after the hook is trimmed]
+10. In `WARN_LINE`, delete `Context check:` [hook fired but no fixed line: nothing removed]
+11. `.startswith("[CONTEXT WARNING]")` → `.startswith("")` [a different hook does not count]
+12. In `SUMMARY_PROMPT`, "a routine reminder" → "a reminder" [the model is told the length warning is not the work]
+
+(A failing assert inside a `with tempfile.TemporaryDirectory()` can surface as a `PermissionError` from
+temp-dir cleanup; check the traceback above it.)
+
+- [ ] **Step 6: Smoke run against real transcripts (temp DB; transcripts are only read)**
+
+```bash
+S="$(mktemp -d)"
+CHAPTER_INDEX_DB="$S/smoke.db" python hooks/chapters.py import
+CHAPTER_INDEX_DB="$S/smoke.db" CHAPTER_SUMMARY_MODEL=qwen2.5:1.5b-instruct python -c "import sqlite3, chapters; [print(i, chapters.summarise(i, r)) for i, r in sqlite3.connect(chapters.DB_PATH).execute('SELECT id, revision FROM chapters ORDER BY id DESC LIMIT 12').fetchall()]"
+CHAPTER_INDEX_DB="$S/smoke.db" python hooks/chapters.py list --all-projects --limit 12
+```
+(run the middle line from `hooks/` so `import chapters` resolves; `.fetchall()` matters — an open read cursor
+blocks `summarise`'s write and every call returns `False`.) Expected: 12 `True`; the list shows the model
+lines; `~/.claude/chapter-index.db` still does not exist.
+
+- [ ] **Step 7: Commit (Gate 2 — ask David first)**
+
+```bash
+git add hooks/chapters.py hooks/test_chapters.py hooks/context-threshold-warn.py
+git commit -m "Add optional local-model summary lines; fix the length warning's wording"
+```
 
 ### Task 6: Skill and README — PROVISIONAL
 

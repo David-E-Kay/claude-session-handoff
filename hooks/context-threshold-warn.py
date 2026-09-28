@@ -93,16 +93,18 @@ def main():
     if used is None or used < THRESHOLD_TOKENS:
         return
 
+    sys.stdout.reconfigure(encoding="utf-8")  # Windows pipes default to cp1252, which cannot print the emoji
     used_k = used // 1000
     threshold_k = THRESHOLD_TOKENS // 1000
 
     print(
         f"[CONTEXT WARNING] Context is at {used_k}k tokens used (threshold {threshold_k}k). "
         "In your next response, if the user runs the session handoff skill explicitly or conversationally, do nothing."
-        "Otherswise, briefly and prominently alert the user that they should consider running "
-        "a session handoff (this is an actual .claude skill), then /compact or start a fresh session before context quality "
-        "degrades. Keep the alert to one sentence at the top of your reply. DO NOT mention the SUPERPOWERS skill"
+        " Otherwise, start your reply with exactly this line, word for word, followed by a blank line: "
+        f"⚠️ Context check: {used_k}k tokens used. Consider running a session handoff, then /compact or a fresh session. "
+        "Do not reword it or add to it. DO NOT mention the SUPERPOWERS skill"
     )
+    # ponytail: the fixed "⚠️ Context check:" line lets chapters.py drop it from chapter summaries; keep them in sync
 
 
 if __name__ == "__main__":
