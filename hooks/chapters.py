@@ -7,6 +7,7 @@ ladder a fresh session uses only when its handoff lacks a fact. Raw tool output
 is never stored — only an outline of actions. Stdlib only.
 """
 
+import argparse
 import json
 import os
 import re
@@ -287,6 +288,175 @@ def record(payload):
         con.close()
 
 
+SHOW_CAP, OUTPUT_CAP = 6000, 3000
+NOTHING = "No chapters recorded yet."
+
+
+def open_ro():
+    """Read-only connection for lookups, or None when nothing has been recorded. Never creates the file."""
+    if not DB_PATH.is_file():
+        return None
+    return sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+
+
+def last_success(con):
+    return con.execute("SELECT MAX(updated_at) FROM sessions").fetchone()[0] or ""
+
+
+def last_error_lines(n=5):
+    try:
+        return LOG_PATH.read_text(encoding="utf-8").splitlines()[-n:]
+    except OSError:
+        return []
+
+
+def warning():
+    errs = last_error_lines(1)
+    con = open_ro()
+    if con is None:
+        return ""
+    try:
+        ok = last_success(con)
+    finally:
+        con.close()
+    if errs and errs[-1][:19] > ok:
+        return f"WARNING: recording has failed since {errs[-1][:19]}; run `chapters.py status`.\n"
+    return ""
+
+
+def cmd_list(all_projects, limit, before):
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        q, args = "SELECT id, session_id, project, branch, started_at, plain_line, ai_line FROM chapters WHERE 1=1", []
+        if not all_projects:
+            q, args = q + " AND project=?", [project_key(os.getcwd())]
+        if before:
+            q, args = q + " AND id<?", args + [before]
+        rows = con.execute(q + " ORDER BY id DESC LIMIT ?", args + [limit]).fetchall()
+    finally:
+        con.close()
+    if not rows:
+        return "No chapters recorded for this project." if not all_projects else NOTHING
+    sessions = {}
+    for r in rows:  # newest first; dict keeps first-seen order, so sessions come out newest first
+        sessions.setdefault(r[1], []).append(r)
+    out = []
+    for chs in sessions.values():
+        first = chs[-1]
+        where = f", {Path(first[2]).name}" if all_projects else ""
+        out.append(f"Session {first[4][:10]} ({first[3]}{where})")
+        out += [f" #{r[0]}  {r[6] or r[5]}" for r in reversed(chs)]
+    return "\n".join(out)
+
+
+def cmd_show(chapter_id, full):
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        if not con.execute("SELECT 1 FROM chapters WHERE id=?", (chapter_id,)).fetchone():
+            return f"No such chapter: #{chapter_id}"
+        ch = load_chapter(con, chapter_id)
+    finally:
+        con.close()
+    lines = [f"#{ch['id']}  {ch['started_at'][:16]}  {ch['branch']}  {Path(ch['project']).name}",
+             f"Prompt: {ch['prompt']}", "Actions:"]
+    lines += [f" {i}. {a['tool']} {a['arg']}{' (failed)' if a['failed'] else ''}" for i, a in enumerate(ch["actions"], 1)]
+    if ch["decisions"]:
+        lines += ["Decisions:"] + [f" - {d}" for d in ch["decisions"]]
+    lines += ["Replies:"] + ch["replies"]
+    s = "\n".join(lines)
+    return s if full or len(s) <= SHOW_CAP else s[:SHOW_CAP] + "\n[truncated — use --full]"
+
+
+def cmd_output(chapter_id, n):
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        row = con.execute("SELECT c.actions, s.transcript_path FROM chapters c JOIN sessions s USING(session_id) "
+                          "WHERE c.id=?", (chapter_id,)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return f"No such chapter: #{chapter_id}"
+    actions = json.loads(row[0])
+    if not 1 <= n <= len(actions) or not actions[n - 1]["tool_use_id"]:
+        return f"Chapter #{chapter_id} has no action {n} with a stored result."
+    if not Path(row[1]).is_file():
+        return "The original conversation file no longer exists, so this raw output is unavailable."
+    tid = actions[n - 1]["tool_use_id"]
+    with open(row[1], encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if tid not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            for b in blocks(e):
+                if b.get("type") == "tool_result" and b.get("tool_use_id") == tid:
+                    s = result_text(b)
+                    return s if len(s) <= OUTPUT_CAP else s[:OUTPUT_CAP] + f"\n[truncated at {OUTPUT_CAP} chars]"
+    return "That output was not found in the conversation file."
+
+
+def cmd_status():
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        ok = last_success(con)
+        n, p = con.execute("SELECT COUNT(*), COUNT(DISTINCT project) FROM chapters").fetchone()
+        u = con.execute("SELECT COUNT(*) FROM unknown_shapes WHERE reviewed=0").fetchone()[0]
+    finally:
+        con.close()
+    errs = last_error_lines()
+    return "\n".join([f"Last recorded: {ok or 'never'}", f"Chapters: {n} across {p} projects",
+                      f"Unknown shapes awaiting review: {u}" + (" (run `chapters.py unknowns`)" if u else ""),
+                      "Recent errors: " + ("none" if not errs else "\n" + "\n".join(errs))])
+
+
+def cmd_unknowns(show_all, mark):
+    if not DB_PATH.is_file():
+        return NOTHING
+    if mark:  # the one lookup-side write; touches only unknown_shapes
+        con = connect()
+        try:
+            n = con.execute("UPDATE unknown_shapes SET reviewed=1 WHERE shape=?", (mark,)).rowcount
+        finally:
+            con.close()
+        return f"Marked {mark} as reviewed." if n else f"No unknown shape named {mark}."
+    con = open_ro()
+    try:
+        rows = con.execute("SELECT shape, count, first_seen, last_seen, session_id, sample, reviewed FROM unknown_shapes"
+                           + ("" if show_all else " WHERE reviewed=0") + " ORDER BY count DESC, shape").fetchall()
+    finally:
+        con.close()
+    if not rows:
+        return "No unknown message shapes awaiting review."
+    out = []
+    for shape, n, first, last, sid, sample, reviewed in rows:
+        out.append(f"{shape}  x{n}  {first[:10]}..{last[:10]}  session {sid}{'  (reviewed)' if reviewed else ''}")
+        out.append(f"    {sample}")
+    return "\n".join(out)
+
+
+def cmd_summary(session_id):
+    """Latest chapter of a session as JSON, or null. The read path for other programs (e.g. the dashboard)."""
+    con = open_ro()
+    if con is None:
+        return "null"
+    try:
+        row = con.execute("SELECT id, revision, ended_at, ai_line, plain_line FROM chapters WHERE session_id=? "
+                          "ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+    finally:
+        con.close()
+    return json.dumps(dict(zip(("id", "revision", "ended_at", "ai_line", "plain_line"), row)) if row else None)
+
+
 def main(argv):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -302,6 +472,37 @@ def main(argv):
             record(payload)
         except Exception as e:
             log_error(f"record {payload.get('session_id')}: {e!r}")
+    else:
+        ap = argparse.ArgumentParser(prog="chapters.py")
+        sub = ap.add_subparsers(dest="cmd", required=True)
+        p = sub.add_parser("list")
+        p.add_argument("--all-projects", action="store_true")
+        p.add_argument("--limit", type=int, default=150)
+        p.add_argument("--before", type=int)
+        p = sub.add_parser("show")
+        p.add_argument("id", type=int)
+        p.add_argument("--full", action="store_true")
+        p = sub.add_parser("output")
+        p.add_argument("id", type=int)
+        p.add_argument("n", type=int)
+        sub.add_parser("status")
+        p = sub.add_parser("unknowns")
+        p.add_argument("--all", action="store_true")
+        p.add_argument("--mark-reviewed", metavar="SHAPE")
+        p = sub.add_parser("summary")
+        p.add_argument("session_id")
+        a = ap.parse_args(argv[1:])
+        try:
+            if a.cmd in ("status", "summary"):  # summary is JSON for programs: no warning line
+                print(cmd_status() if a.cmd == "status" else cmd_summary(a.session_id))
+                return
+            body = {"list": lambda: cmd_list(a.all_projects, a.limit, a.before),
+                    "show": lambda: cmd_show(a.id, a.full),
+                    "output": lambda: cmd_output(a.id, a.n),
+                    "unknowns": lambda: cmd_unknowns(a.all, a.mark_reviewed)}[a.cmd]()
+            print(warning() + body)
+        except Exception as e:  # not log_error: warning() would read it as a recording failure
+            print("null" if a.cmd == "summary" else f"Lookup failed: {e!r}")
 
 
 if __name__ == "__main__":

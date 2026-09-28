@@ -214,4 +214,86 @@ with tempfile.TemporaryDirectory() as tmp:
     assert any(sh.startswith("parse-error:") for sh, in db.execute("SELECT shape FROM unknown_shapes"))
     db.close()
 
+# --- Task 3: lookup ---
+with tempfile.TemporaryDirectory() as tmp:  # lookups against a missing database create nothing
+    env = {**os.environ, "CHAPTER_INDEX_DB": str(Path(tmp) / "none.db")}
+    for args in (["list"], ["show", "1"], ["output", "1", "1"], ["status"], ["unknowns"],
+                 ["unknowns", "--mark-reviewed", "x"]):
+        r = run(*args, env=env)
+        assert r.returncode == 0 and r.stdout.strip() == "No chapters recorded yet.", (args, r.stdout, r.stderr)
+    assert run("summary", "s1", env=env).stdout.strip() == "null"
+    assert os.listdir(tmp) == [], os.listdir(tmp)
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    env = {**os.environ, "CHAPTER_INDEX_DB": str(tmp / "idx.db")}
+    proj = tmp / "proj"
+    proj.mkdir()
+    tr = tmp / "s1.jsonl"
+    write_lines(tr, [
+        {**user("first ask"), "cwd": str(proj)},
+        asst(text("Reading."), tool("t1", "Read", file_path="a.py")),
+        result("t1", "A" * 5000),
+        asst(text("Done first.")),
+        {**user("second ask"), "cwd": str(proj)},
+        asst(text("x" * 7000)),
+    ])
+    run("record", payload={"session_id": "s1", "transcript_path": str(tr), "cwd": str(proj)}, env=env)
+
+    out = run("list", env=env, cwd=str(proj)).stdout
+    assert "Session 2026-09-26 (feat)" in out, out
+    assert out.index("#1") < out.index("#2"), out
+    assert '"first ask" — Done first. Files: a.py' in out, out
+    assert run("list", env=env, cwd=str(tmp)).stdout.strip() == "No chapters recorded for this project.", "other project must be empty"
+    assert "#1" in run("list", "--all-projects", env=env, cwd=str(tmp)).stdout
+
+    show = run("show", "1", env=env).stdout
+    assert "Prompt: first ask" in show and " 1. Read a.py" in show and "Done first." in show, show
+    assert "AAAA" not in show, "show must not include raw output"
+    long = run("show", "2", env=env).stdout
+    assert "[truncated — use --full]" in long and len(long) < 6500, len(long)
+    assert "[truncated" not in run("show", "2", "--full", env=env).stdout
+
+    sm = json.loads(run("summary", "s1", env=env).stdout)
+    assert sm["id"] == 2 and sm["revision"] == 1 and sm["ai_line"] is None and sm["plain_line"].startswith('"second ask"'), sm
+    assert run("summary", "nope", env=env).stdout.strip() == "null"
+
+    tu = tmp / "u.jsonl"
+    write_lines(tu, [{**user("<odd-tag>q</odd-tag>"), "cwd": str(proj)}])
+    run("record", payload={"session_id": "u", "transcript_path": str(tu), "cwd": str(proj)}, env=env)
+    u = run("unknowns", env=env).stdout
+    assert "odd-tag  x1" in u and "session u" in u and "<odd-tag>q</odd-tag>" in u, u
+    assert "Unknown shapes awaiting review: 1" in run("status", env=env).stdout
+    assert run("unknowns", "--mark-reviewed", "odd-tag", env=env).stdout.strip() == "Marked odd-tag as reviewed."
+    assert "odd-tag" not in run("unknowns", env=env).stdout
+    assert "(reviewed)" in run("unknowns", "--all", env=env).stdout
+    assert "Unknown shapes awaiting review: 0" in run("status", env=env).stdout
+
+    o = run("output", "1", "1", env=env).stdout
+    assert o.startswith("AAA") and "[truncated at 3000 chars]" in o and len(o) < 3100, o[:50]
+    tr.unlink()
+    assert "no longer exists" in run("output", "1", "1", env=env).stdout
+    assert "No such chapter" in run("show", "99", env=env).stdout
+
+    st = run("status", env=env).stdout
+    assert "Last recorded:" in st and "Recent errors: none" in st, st
+    (tmp / "chapter-index.log").write_text("2999-01-01T00:00:00 ERROR boom\n", encoding="utf-8")
+    assert run("list", "--all-projects", env=env).stdout.startswith("WARNING: recording has failed"), "warning line"
+    assert run("summary", "s1", env=env).stdout.startswith("{"), "summary stays pure JSON"
+    assert "boom" in run("status", env=env).stdout
+
+# --- Task 3 fix round 1: a broken DB must not be swallowed silently ---
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    dbfile = tmp / "idx.db"
+    dbfile.touch()  # 0-byte file: sqlite opens it fine but it has no tables
+    env = {**os.environ, "CHAPTER_INDEX_DB": str(dbfile)}
+    r = run("status", env=env)
+    assert r.returncode == 0 and r.stdout.strip() and "Lookup failed" in r.stdout, r
+    r = run("summary", "any-id", env=env)
+    assert r.returncode == 0 and r.stdout.strip() == "null", r
+    r = run("list", env=env)
+    assert r.returncode == 0 and "Lookup failed" in r.stdout, r
+    assert not (tmp / "chapter-index.log").exists(), "lookup failures must not look like recording failures"
+
 print("ok")
