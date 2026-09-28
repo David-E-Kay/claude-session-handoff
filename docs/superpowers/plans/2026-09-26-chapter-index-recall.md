@@ -1167,24 +1167,232 @@ git commit -m "Add read-only lookup commands, unknowns review and summary JSON"
 
 ---
 
-### Task 4: One-time import and `rebuild` — PROVISIONAL
+### Task 4: One-time import and `rebuild`
+
+**Status:** detail written 2026-09-27 against the tree at `d25ee4f` and verified in a scratch copy: RED seen
+(argparse rejects `import`), GREEN seen, all three mutations below caught by their intended assertion. Smoke
+run against a temp DB: 254 real transcripts → 1167 chapters in ~4 s, re-run wrote 0, `rebuild --all` gave the
+same 1167, 0 unknown shapes; the real `~/.claude/chapter-index.db` was never created.
 
 Purpose: index every existing transcript before Claude Code deletes old ones (`cleanupPeriodDays`, 30 by
-default), and let a changed classification rule apply backwards. Protects: history that would otherwise be
-lost, and the unknown-shape review loop (a shape found to be a real prompt only helps past sessions if they
-can be re-split). Depends on: Task 2's `record`.
+default), and let a changed classification rule apply backwards (spec "One-time import", case 12).
 
-Approach: `chapters.py import` walks `~/.claude/projects/*/*.jsonl` (top level only), builds a payload per
-file (`session_id` from the filename stem, `cwd` from the transcript lines) and calls the same record path, so
-re-running is a no-op. `chapters.py rebuild [SESSION_ID | --all]` deletes a session's chapters and its
-`sessions` row, then records it again from its transcript; a session whose transcript is gone is left
-untouched and reported. Chapter ids for a rebuilt session change.
+**Files:**
+- Modify: `hooks/chapters.py` (`note_unknown`, `record`; add `PROJECTS`, `cmd_import`, `cmd_rebuild` just above `main`; extend `main`)
+- Modify: `hooks/test_chapters.py` (Task 4 section before the final `print("ok")`)
 
-Open questions to settle when detailing: whether `rebuild` should subtract that session's earlier
-`unknown_shapes` counts (otherwise they double); whether `rebuild` and `import` share one function.
-Tests (spec case 12 and the import no-op): two fake project dirs, import twice with counts unchanged;
-rebuild under a changed rule re-splits; a session with no transcript is left alone.
-Rough files: `hooks/chapters.py`, `hooks/test_chapters.py`. Detail to be written just before this task starts.
+**Interfaces:**
+- Consumes (verified at `d25ee4f`): `record(payload)` (chapters.py:246), `note_unknown(con, shape, sample, session_id, seen)` (:240), `open_ro()`, `NOTHING`, `DB_PATH`, `LOG_PATH`, `NOT_PROMPTS`; the lookup `try/except` in `main` (:495-506); test helpers `run`, `write_lines`, `user`, `asst`, `text`; `sqlite3` already imported in the test file.
+- Produces:
+  - `note_unknown(..., bump=True)` — `bump=False` inserts a shape not seen before and leaves an existing row alone.
+  - `record(payload, reset=False)` — `reset=True` deletes the session's chapters and `sessions` row inside the same `BEGIN IMMEDIATE` transaction, then reads from byte 0, and calls `note_unknown(..., bump=False)`.
+  - `PROJECTS = Path.home() / ".claude" / "projects"`
+  - `cmd_import(root) -> str` — `Imported N transcripts: M chapters written.` plus one `Failed <path>: <repr>` line per failed file.
+  - `cmd_rebuild(session_id: str | None, all_sessions: bool) -> str` — `Rebuilt N sessions: M chapters written.`, then `Left untouched (transcript gone): a, b` if any, then `Failed` lines; `No recorded session X.` for an unknown id; `NOTHING` if there is no DB.
+  - CLI: `import [ROOT]` (default `PROJECTS`), `rebuild (SESSION_ID | --all)`. No warning line.
+
+Decisions taken while detailing (approved at Gate 1):
+1. `import` and `rebuild` share `record`. Rebuild's delete happens inside record's own transaction, so a crash
+   or lock mid-rebuild rolls back and the session keeps its old chapters. Two separate steps (delete, then
+   record) could lose a finished session: no later Stop would ever re-record it.
+2. `rebuild` does not double `unknown_shapes` counts. Subtracting is impossible — the table keeps one total per
+   shape, not per session — so rebuild adds only shapes never seen before (`bump=False`). Invariant 7 holds: a
+   shape that is new under a changed rule is still logged.
+3. `import` takes an optional ROOT so tests never touch `~/.claude/projects`. The payload is just
+   `session_id` (the filename stem — Claude Code names transcripts `<session_id>.jsonl`) and
+   `transcript_path`; `record` already falls back to the transcript's own `cwd`.
+
+Known ceilings (not fixed here): a lock during rebuild rolls back silently and still counts the session as
+rebuilt (record returns `[]` on lock); failures in `import`/`rebuild` that escape their loops print
+`Lookup failed: …` (the Task 3 guard's wording). Rebuilt chapters lose `ai_line` until Task 5's
+`summarise --missing`.
+
+- [ ] **Step 1: Write the failing test**
+
+Insert before the final `print("ok")` in `hooks/test_chapters.py`:
+
+```python
+# --- Task 4: import + rebuild ---
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    env = {**os.environ, "CHAPTER_INDEX_DB": str(tmp / "idx.db")}
+    root = tmp / "projects"
+    for proj, sid in (("p1", "a1"), ("p2", "b1")):
+        (root / proj / sid).mkdir(parents=True)  # subagent transcripts live in a subfolder: never imported
+        write_lines(root / proj / f"{sid}.jsonl", [user(f"ask {sid}"), asst(text("Done."))])
+        write_lines(root / proj / sid / "agent-x.jsonl", [user("SUBAGENT ask"), asst(text("sub"))])
+    r = run("import", str(root), env=env)
+    assert r.returncode == 0 and r.stdout.strip() == "Imported 2 transcripts: 2 chapters written.", r
+    r = run("import", str(root), env=env)
+    assert r.stdout.strip() == "Imported 2 transcripts: 0 chapters written.", r  # re-run is a no-op
+    con = sqlite3.connect(tmp / "idx.db")
+    assert con.execute("SELECT COUNT(*) FROM chapters").fetchone()[0] == 2
+    assert not con.execute("SELECT 1 FROM chapters WHERE prompt LIKE 'SUBAGENT%'").fetchone()
+    con.close()
+    assert run("rebuild", "a1", env=env).stdout.strip() == "Rebuilt 1 sessions: 1 chapters written."
+    assert run("rebuild", "nope", env=env).stdout.strip() == "No recorded session nope."
+
+    # rebuild under a changed rule: in-process, so the rule can change between record and rebuild
+    tr = root / "p1" / "r1.jsonl"
+    write_lines(tr, [user("keep this"), asst(text("A.")), user("zz later"), asst(text("B.")), user("<odd-tag> x")])
+    saved = chapters.DB_PATH, chapters.LOG_PATH, chapters.NOT_PROMPTS
+    chapters.DB_PATH, chapters.LOG_PATH = tmp / "idx.db", tmp / "chapter-index.log"  # never the real DB
+    try:
+        assert len(chapters.record({"session_id": "r1", "transcript_path": str(tr)})) == 2
+        chapters.NOT_PROMPTS = saved[2] + ("zz",)  # the changed rule: "zz ..." is no longer a prompt
+        out = chapters.cmd_rebuild("r1", False)
+        assert out == "Rebuilt 1 sessions: 1 chapters written.", out
+        con = sqlite3.connect(tmp / "idx.db")
+        rows = con.execute("SELECT prompt, replies FROM chapters WHERE session_id='r1'").fetchall()
+        assert rows == [("keep this", json.dumps(["A.", "B."]))], rows
+        assert con.execute("SELECT count FROM unknown_shapes WHERE shape='odd-tag'").fetchone()[0] == 1, "no double count"
+        con.close()
+        (root / "p2" / "b1.jsonl").unlink()
+        out = chapters.cmd_rebuild(None, True)
+        assert "Left untouched (transcript gone): b1" in out and "Rebuilt 2 sessions" in out, out
+        con = sqlite3.connect(tmp / "idx.db")
+        assert con.execute("SELECT prompt FROM chapters WHERE session_id='b1'").fetchone() == ("ask b1",)
+        con.close()
+    finally:
+        chapters.DB_PATH, chapters.LOG_PATH, chapters.NOT_PROMPTS = saved
+```
+
+The in-process half patches `chapters.DB_PATH` and `LOG_PATH` because the module computed them at import time
+from an unset env var — without the patch it would write the real `~/.claude/chapter-index.db`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `python hooks/test_chapters.py`
+Expected: FAIL on the first `import` assertion — returncode 2, stderr `invalid choice: 'import'`.
+
+- [ ] **Step 3: Implement**
+
+Replace `note_unknown`:
+
+```python
+def note_unknown(con, shape, sample, session_id, seen, bump=True):
+    """bump=False (rebuild) only adds shapes not seen before, so re-reading a transcript never doubles counts."""
+    con.execute("INSERT INTO unknown_shapes(shape, count, first_seen, last_seen, session_id, sample) VALUES (?,1,?,?,?,?) "
+                "ON CONFLICT(shape) DO " + ("UPDATE SET count=count+1, last_seen=excluded.last_seen" if bump else "NOTHING"),
+                (shape, seen, seen, session_id, sample))
+```
+
+In `record`: signature and docstring become
+
+```python
+def record(payload, reset=False):
+    """Stop hook body: fold the transcript's new tail into the index. Returns [(chapter_id, revision)] written.
+    reset=True (rebuild) first forgets the session in the same transaction, so it is re-read from byte 0."""
+```
+
+directly after `con.execute("BEGIN IMMEDIATE")  # take the write lock ...` add
+
+```python
+        if reset:
+            con.execute("DELETE FROM chapters WHERE session_id=?", (sid,))
+            con.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
+```
+
+and give both `note_unknown(...)` calls in the loop a trailing `, bump=not reset` argument.
+
+Just above `def main(argv):`:
+
+```python
+PROJECTS = Path.home() / ".claude" / "projects"
+
+
+def cmd_import(root):
+    """Record every top-level transcript under root; subagent transcripts live in subfolders and are skipped."""
+    done, written, failed = 0, 0, []
+    for t in sorted(Path(root).glob("*/*.jsonl")):
+        try:
+            written += len(record({"session_id": t.stem, "transcript_path": str(t)}))
+            done += 1
+        except Exception as e:  # one bad file must not stop the rest
+            failed.append(f"Failed {t}: {e!r}")
+    return "\n".join([f"Imported {done} transcripts: {written} chapters written.", *failed])
+
+
+def cmd_rebuild(session_id, all_sessions):
+    """Re-split recorded sessions from their transcripts. Chapter ids change; a session whose transcript is gone
+    is left untouched and reported."""
+    con = open_ro()
+    if con is None:
+        return NOTHING
+    try:
+        rows = con.execute("SELECT session_id, transcript_path FROM sessions" + ("" if all_sessions else " WHERE session_id=?"),
+                           () if all_sessions else (session_id,)).fetchall()
+    finally:
+        con.close()
+    if not rows:
+        return f"No recorded session {session_id}."
+    done, written, gone, failed = 0, 0, [], []
+    for sid, tpath in rows:
+        if not tpath or not Path(tpath).is_file():
+            gone.append(sid)
+            continue
+        try:
+            written += len(record({"session_id": sid, "transcript_path": tpath}, reset=True))
+            done += 1
+        except Exception as e:  # rolled back: that session keeps its old chapters
+            failed.append(f"Failed {sid}: {e!r}")
+    out = [f"Rebuilt {done} sessions: {written} chapters written."]
+    if gone:
+        out.append(f"Left untouched (transcript gone): {', '.join(gone)}")
+    return "\n".join(out + failed)
+```
+
+In `main`, after the `summary` subparser:
+
+```python
+        p = sub.add_parser("import")
+        p.add_argument("root", nargs="?", default=str(PROJECTS))
+        p = sub.add_parser("rebuild")
+        g = p.add_mutually_exclusive_group(required=True)
+        g.add_argument("session_id", nargs="?")
+        g.add_argument("--all", action="store_true")
+```
+
+and as the first statement inside the `try:`:
+
+```python
+            if a.cmd in ("import", "rebuild"):  # write commands: no warning line
+                print(cmd_import(a.root) if a.cmd == "import" else cmd_rebuild(a.session_id, a.all))
+                return
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `python hooks/test_chapters.py` → `ok`; `python hooks/test_handoff_save.py` → `ok`.
+
+- [ ] **Step 5: Prove the test can fail**
+
+Three mutations, each from a `.bak` copy and restored from it:
+1. In `note_unknown`, `if bump` → `if True` → expect `AssertionError: no double count`. (A failing assert
+   inside the `with` can surface as a `PermissionError` from temp-dir cleanup; check the traceback above it.)
+2. Replace the two `DELETE` lines under `if reset:` with `pass` → expect the `Rebuilt 1 sessions: 1 chapters
+   written.` assertion to fail.
+3. Delete the `if not tpath or not Path(tpath).is_file():` block in `cmd_rebuild` → expect the
+   `Left untouched (transcript gone): b1` assertion to fail.
+
+- [ ] **Step 6: Smoke run against real transcripts (temp DB; transcripts are only read)**
+
+```bash
+S="$(mktemp -d)"
+CHAPTER_INDEX_DB="$S/smoke.db" python hooks/chapters.py import
+CHAPTER_INDEX_DB="$S/smoke.db" python hooks/chapters.py import
+CHAPTER_INDEX_DB="$S/smoke.db" python hooks/chapters.py rebuild --all
+CHAPTER_INDEX_DB="$S/smoke.db" python hooks/chapters.py status
+```
+Expected: second import writes 0 chapters; rebuild writes the same total as the first import; `Unknown shapes
+awaiting review: 0`; `~/.claude/chapter-index.db` still does not exist.
+
+- [ ] **Step 7: Commit (Gate 2 — ask David first)**
+
+```bash
+git add hooks/chapters.py hooks/test_chapters.py
+git commit -m "Add one-time import and rebuild of past sessions"
+```
 
 ### Task 5: Optional Ollama summary lines — PROVISIONAL
 
