@@ -2020,13 +2020,59 @@ line 3; "To look something up" bullet in "When to invoke"); create `skills/resum
   `git add docs/superpowers/specs/2026-09-26-chapter-index-recall-design.md skills/session-handoff/SKILL.md skills/resume-work/SKILL.md README.md`
   `git commit -m "Let the lookup start on a named missing fact; add /resume-work"`
 
-### Task 7: Install on David's machine — PROVISIONAL, approval required
+### Task 7: Install on David's machine
 
-Also install `skills/resume-work/`. Live checks carried from Tasks 6 and 6a: settings.json `"env"` reaches the
-Stop hook; the session-handoff description loads in full (its last sentence, the "Do NOT invoke…" guard, must be visible — the listing cuts descriptions at 1,536 characters and this one is ~1,400); `/resume-work` loads the newest handoff.
+Detailed 2026-09-28 against the machine as surveyed that day. Controller runs it inline in this session;
+Gate 1 before any step. Installs from branch `claude/chapter-index-recall` at `9d14cb7` (not yet merged to
+master — merging is the finishing step, after the final Codex review).
 
-Copy `chapters.py` and the updated SKILL.md into `~/.claude/`, add the Stop hook entry to
-`~/.claude/settings.json` alongside `handoff-save.py`, run the import, set
-`CHAPTER_SUMMARY_MODEL=qwen2.5:1.5b-instruct` if David wants Ollama lines. Suggest the narrow allow-rule
-`Bash(python ~/.claude/hooks/chapters.py:*)` — never an interpreter wildcard. Verify with one real reply,
-then `list` and `status`.
+**Surveyed state (2026-09-28).** `~/.claude/hooks/`: `context-threshold-warn.py`,
+`context-threshold-handoff-task.py`, `handoff-save.py` identical to the repo (CR-insensitive); `chapters.py`
+absent. `~/.claude/skills/session-handoff/SKILL.md` identical to master `7216f68` (no local edits, safe to
+replace); `~/.claude/skills/resume-work/` absent. `~/.claude/chapter-index.db` absent. Python 3.14.5 at
+`/c/Python314/python`. Ollama up with `qwen2.5:1.5b-instruct`. `~/.claude/projects/`: 45 project dirs, 457
+`.jsonl` files, 329 MB. `~/.claude/settings.json`: `"env"` holds only `PYTHONIOENCODING`; every hook command
+uses the absolute form `python "C:/Users/david/.claude/hooks/<x>.py"`; `"Stop"` has one entry,
+`handoff-save.py`; `permissions.allow` has `Bash(pip:*)`, `Bash(pip3:*)` (pre-existing, untouched here).
+
+- [x] **Step 1: Back up.** Copy `~/.claude/settings.json` and `~/.claude/skills/session-handoff/SKILL.md` to
+  the session scratchpad. Rollback for every later step is: restore those two copies, delete
+  `~/.claude/hooks/chapters.py`, `~/.claude/skills/resume-work/`, `~/.claude/chapter-index.db`.
+- [x] **Step 2: Copy files.** `hooks/chapters.py` → `~/.claude/hooks/chapters.py`;
+  `skills/session-handoff/SKILL.md` → `~/.claude/skills/session-handoff/SKILL.md`; `skills/resume-work/` →
+  `~/.claude/skills/resume-work/`. Verify: CR-insensitive compare of each against the repo reports same.
+- [x] **Step 3: Import, before the hook is registered** (so nothing else writes the new database while it
+  fills; import is re-runnable either way). `python ~/.claude/hooks/chapters.py import`, timed. Verify:
+  `status` reports sessions/chapters and no recording errors; `list` for this project shows recent chapters
+  including this session's; `unknowns` output noted for the final review.
+- [x] **Step 4: Register in `settings.json`** (one edit, then parse it with `python -m json.tool` — a broken
+  file disables every hook). Append to the existing `"Stop"` entry's `"hooks"` array, after
+  `handoff-save.py`, matching the file's absolute-path form:
+  `{"type": "command", "command": "python \"C:/Users/david/.claude/hooks/chapters.py\" record"}`.
+  David chose both at Gate 1 (2026-09-28): `"CHAPTER_SUMMARY_MODEL": "qwen2.5:1.5b-instruct"` in `"env"`, and
+  `"Bash(python ~/.claude/hooks/chapters.py:*)"` in `permissions.allow` (the `~` form, because the rule
+  matches the command text the skill runs; covers this script only, never `python` in general).
+- [x] **Step 5: Live checks in a fresh session** (hooks and skill descriptions are read at session start).
+  David opens a new session in this repo and types `/resume-work`. Pass when:
+  (a) it loads the newest handoff and does not write one;
+  (b) the session-handoff description in that session's skill list ends with the "Do NOT invoke reading or
+  lookup…" sentence (proves the Task 6 colon fix and that the 1,536-character cut doesn't bite);
+  (c) back here, `status` shows that session recorded with no recording errors, and — if summaries are on —
+  its newest chapter has a model line within about a minute (proves `"env"` reaches the Stop hook and the
+  detached summariser survives).
+  `disable-model-invocation` is confirmed by (a) plus resume-work being absent from the skill list.
+- [x] **Step 6 (only if summaries are on): backfill.** After Step 3 reports the chapter count, estimate the
+  run time from a timed sample of 10 (`summarise ID REVISION` per chapter) and put it to David before
+  starting `summarise --missing` in the background. Needs `CHAPTER_SUMMARY_MODEL` set in the command's own
+  environment (the settings `"env"` block doesn't reach a shell).
+- [x] **Step 7: Record.** Ledger line in `progress.md`; plan checkboxes ticked; nothing in the repo changes
+  except this plan and the ledger. Commit the plan update at Gate 2.
+
+**Result (2026-09-28).** Import 260 transcripts → 1194 chapters, 13 projects, 4.4 s, 0 unknowns, 0 errors
+(197 subagent `.jsonl` skipped by design). settings.json: exactly the three additions, JSON valid; backup in
+that session's scratchpad `t7-backup`. Settings and skills hot-reloaded without a restart, so checks (b) and
+(c) passed in the installing session; (a) passed in a fresh session: `/resume-work` loaded the newest handoff,
+wrote none, used the index only for the status/unlabelled checks the handoff named, and was recorded with a
+model line. Backfill: 954 of 1184 labelled, 230 rejected (multi-line or >200 chars) and kept their plain line.
+For final review: label quality (1.5b model overstates, e.g. "Live test confirmed"); ~19% rejection — test
+keeping a rejected answer's first line instead of discarding it.
