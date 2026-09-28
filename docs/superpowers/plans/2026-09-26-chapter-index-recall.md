@@ -1966,7 +1966,64 @@ rung is one more capped read on top of the last, which is why you stop as soon a
 **Carried to Task 7:** confirm that `CHAPTER_SUMMARY_MODEL` set in settings.json `"env"` reaches the Stop
 hook; if it doesn't, fix the README wording then.
 
+### Task 6a: Self-initiated lookup on a named missing fact, and a `/resume-work` command
+
+Approved by David 2026-09-28 (Gate 1) after Task 6 landed at `e51a584`. Docs only. Controller applies
+inline; Opus task review; Gate 2 before commit.
+
+**Why.** Task 6 ties the ladder to the user asking. A session that never resumed doesn't know the index
+exists, so a fact Claude itself needs mid-task can't be recovered. The widening is narrow: Claude may start
+a lookup only when it can name a specific missing fact it needs to continue (why X was decided, what an
+earlier run returned), and that fact is in neither the handoff nor memory. "This request resembles earlier
+work" stays excluded. The existing "tell the user which chapter" rule keeps it visible.
+`/resume-work` gives David a guaranteed, unambiguous way to start the reading half (bare
+`/session-handoff` is ambiguous between writing and reading).
+
+**Files:** spec (Part 2 "Skill changes", ~line 232-236); `skills/session-handoff/SKILL.md` (frontmatter
+line 3; "To look something up" bullet in "When to invoke"); create `skills/resume-work/SKILL.md`;
+`README.md` (Install step 1; Usage).
+
+- [ ] **Step 1: Spec.** After the bullet ending "never fired by topic similarity." add:
+  `Amended 2026-09-28 (David): the lookup half may also start when Claude itself needs a specific, nameable fact about earlier work to continue and it is in neither the handoff nor the memory topic files. Resemblance to earlier work still never triggers it.`
+- [ ] **Step 2: SKILL.md frontmatter (line 3).** In the LOOKUP clause, after `…or a near-equivalent question about the past` insert
+  `, or when you need a specific fact about earlier work to continue and it is in neither the handoff nor memory`.
+  Replace the closing guard
+  `Do NOT invoke the reading or lookup half merely because a request resembles earlier work in this repo — both require the user to ask.`
+  with
+  `Do NOT invoke either half merely because a request resembles earlier work in this repo — reading requires the user to ask, and lookup requires the user to ask or a specific fact you can name that is missing.`
+  Check afterwards: the description value contains no `: ` and no ` #` (Task 6 finding — either breaks loading).
+- [ ] **Step 3: SKILL.md "To look something up" bullet.** Append:
+  `Also use it when you yourself need a specific fact about earlier work to continue (why something was decided, what an earlier run returned) and it is in neither the handoff nor memory. Name the missing fact first; if you can't name it, don't look.`
+- [ ] **Step 4: create `skills/resume-work/SKILL.md`.**
+  ```
+  ---
+  name: resume-work
+  description: Resume from the last session handoff. Explicit shortcut for the reading half of the session-handoff skill.
+  disable-model-invocation: true
+  ---
+
+  # Resume work
+
+  Invoke the `session-handoff` skill with the Skill tool, then follow its "Reading a handoff in a fresh session" section exactly. Do not write a handoff.
+  ```
+  `disable-model-invocation: true` keeps it slash-only (never auto-fired, no description in every session's
+  context). **Verify at implementation** that Claude Code honours this key for skills; if not, drop it and
+  keep the description free of `: `.
+- [ ] **Step 5: README.** Install step 1 also copies `skills/resume-work`. Usage, "Starting the next one":
+  add `Or type **/resume-work**, which always runs the reading half.` Asking-about-earlier-work paragraph:
+  add one sentence that Claude may also look something up on its own when it needs a specific past fact
+  to continue, and tells you which chapter it used.
+- [ ] **Step 6: Verify.** Description checks from Step 2 for both skills; `git diff --check`; both test
+  suites `ok`. Live checks move to Task 7: in a fresh session after install, the skill list shows the full
+  session-handoff description (proves the Task 6 colon fix) and `/resume-work` loads the newest handoff.
+- [ ] **Step 7: Commit (Gate 2).**
+  `git add docs/superpowers/specs/2026-09-26-chapter-index-recall-design.md skills/session-handoff/SKILL.md skills/resume-work/SKILL.md README.md`
+  `git commit -m "Let the lookup start on a named missing fact; add /resume-work"`
+
 ### Task 7: Install on David's machine — PROVISIONAL, approval required
+
+Also install `skills/resume-work/`. Live checks carried from Tasks 6 and 6a: settings.json `"env"` reaches the
+Stop hook; the session-handoff description loads in full; `/resume-work` loads the newest handoff.
 
 Copy `chapters.py` and the updated SKILL.md into `~/.claude/`, add the Stop hook entry to
 `~/.claude/settings.json` alongside `handoff-save.py`, run the import, set
