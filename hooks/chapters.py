@@ -534,6 +534,18 @@ SUMMARY_PROMPT = ("Read one turn of a coding session and say what work it did.\n
                   "was done about it.\n\n"
                   "One line, at most 20 words, naming what the turn did. Describe the work, not the wording of "
                   "the reply. No preamble, no quotes.\n\nLINE:")
+# Generic headings the small model puts in front of the line (seen: "Work Done:", "Work Done in Turn:").
+LABEL_PREFIX = re.compile(r"^(?:work(?: done)?(?: in turn)?|work description|summary|line)\s*:\s*", re.I)
+
+
+def clean_line(s):
+    """The model's answer cut to one label: first non-blank line, no bold or generic heading, first sentence if long.
+    The model often ignores the length and one-line rules; trimming keeps its answer instead of losing it."""
+    line = next((x for x in s.splitlines() if x.strip()), "")
+    line = LABEL_PREFIX.sub("", line.replace("**", "").strip().lstrip("-*# "))
+    if len(line) > 200:
+        line = re.split(r"(?<=[.!?])\s", line, maxsplit=1)[0]
+    return one_line(line, 200)
 
 
 def summarise(chapter_id, revision):
@@ -554,10 +566,10 @@ def summarise(chapter_id, revision):
         req = urllib.request.Request(OLLAMA_URL.rstrip("/") + "/api/generate", body, {"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                line = (json.loads(r.read()).get("response") or "").strip()
+                line = clean_line(json.loads(r.read()).get("response") or "")
         except OSError:  # refused, timed out, or HTTP error (e.g. model not pulled)
             return None
-        if len(line.splitlines()) != 1 or len(line) > 200:
+        if not line:
             return False
         con = connect()
         try:  # the revision check makes a stale summary a no-op

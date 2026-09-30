@@ -433,9 +433,8 @@ with tempfile.TemporaryDirectory() as tmp:
         chapters.SUMMARY_MODEL = ""  # invariant 5: no model, no request
         assert chapters.summarise(c1, r1) is False and not Stub.bodies and ai(db, c1) is None
         chapters.SUMMARY_MODEL = "m"
-        for bad in ("two\nlines", "  ", "x" * 201):
-            Stub.answer = bad
-            assert chapters.summarise(c1, r1) is False and ai(db, c1) is None, f"rejected: {bad[:10]!r}"
+        Stub.answer = "  "
+        assert chapters.summarise(c1, r1) is False and ai(db, c1) is None, "a blank answer is still rejected"
         Stub.answer = "  Added the import command \n"
         assert chapters.summarise(c1, r1 - 1) is False and ai(db, c1) is None, "stale revision never written"
 
@@ -456,8 +455,9 @@ with tempfile.TemporaryDirectory() as tmp:
         assert chapters.summarise(c2, r2) is None and ai(db, c2) is None, "None = model not reached"
         assert not (tmp / "chapter-index.log").exists(), "a summary failure is not a recording failure"
         chapters.OLLAMA_URL = STUB
+        Stub.answer = "**Work Done:** Added the import command.\n\n- More detail."  # a rule-breaking answer is cleaned, not lost
         assert chapters.cmd_summarise_missing() == "Summarised 1 of 1 chapters.", "fills only lines still missing"
-        assert ai(db, c2) == "Added the import command"
+        assert ai(db, c2) == "Added the import command.", ai(db, c2)
         con = sqlite3.connect(db)
         with con:  # a chapter that grows gets a new revision; its old ai_line no longer describes it
             con.execute("UPDATE chapters SET ai_line='old' WHERE id=?", (c2,))
@@ -467,7 +467,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert ai(db, c2) is None, "growth clears the stale ai_line"
         write_lines(tr, [user(f"more {i}") for i in range(4)], mode="a")
         chapters.record({"session_id": "s5", "transcript_path": str(tr)})
-        Stub.answer = "two\nlines"  # rejected answers are normal (~1 in 5), so they never stop a backfill
+        Stub.answer = "  "  # rejected answers are normal, so they never stop a backfill
         assert chapters.cmd_summarise_missing() == "Summarised 0 of 5 chapters."
         chapters.OLLAMA_URL = "http://127.0.0.1:9"  # but an unreachable model stops it, not ~40 silent minutes
         out = chapters.cmd_summarise_missing()
@@ -499,5 +499,17 @@ with tempfile.TemporaryDirectory() as tmp:
     assert ai(db, c3) is None and len(Stub.bodies) == 1, "no model set: nothing was asked"
     Stub.delay = 0
 srv.shutdown()
+
+# clean_line: shapes seen from the real model (qwen2.5:1.5b) that used to be thrown away
+L = chapters.clean_line
+assert L("two\nlines") == "two"
+assert L("\n  **Work Done:** Replied to it.\n\n- more") == "Replied to it."
+assert L("**Work Done in Turn:** Ran it.") == "Ran it."
+assert L("**Work Description:** Resumed it.") == "Resumed it."
+assert L("- **Archive four stale sessions:** Found four.") == "Archive four stale sessions: Found four.", "real content kept"
+assert L("Fixed it. " + "y " * 150) == "Fixed it.", "over the cap: first sentence"
+assert L("Short one. Second one.") == "Short one. Second one.", "under the cap: kept whole"
+assert L("z" * 250) == "z" * 199 + "…", "one long sentence: cut at 200"
+assert L("  \n ") == ""
 
 print("ok")
