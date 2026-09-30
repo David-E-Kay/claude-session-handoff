@@ -267,7 +267,13 @@ def record(payload, reset=False):
         if reset:
             con.execute("DELETE FROM chapters WHERE session_id=?", (sid,))
             con.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
-        row = con.execute("SELECT project, offset, open_chapter_id FROM sessions WHERE session_id=?", (sid,)).fetchone()
+        row = con.execute("SELECT project, offset, open_chapter_id, transcript_path FROM sessions WHERE session_id=?",
+                          (sid,)).fetchone()
+        # Transcripts are append-only, so neither should happen; if one does, say so rather than go quiet.
+        if row and os.path.normcase(os.path.normpath(row[3] or "")) != os.path.normcase(os.path.normpath(tpath)):
+            log_error(f"record {sid}: transcript path changed from {row[3]} to {tpath}; kept reading at offset {row[1]}")
+        elif row and os.path.getsize(tpath) < row[1]:
+            log_error(f"record {sid}: {tpath} is shorter than the saved offset {row[1]}; nothing new is indexed")
         entries, new_offset, had_bytes = read_new(tpath, row[1] if row else 0)
         if had_bytes and not any("type" in e for e in entries):
             log_error(f"record {sid}: no recognisable transcript lines in {tpath}")
@@ -532,7 +538,7 @@ SUMMARY_PROMPT = ("Read one turn of a coding session and say what work it did.\n
 
 def summarise(chapter_id, revision):
     """Ask the local model for a one-line summary; write it only if the chapter is still at `revision`.
-    True if written. Every failure is silent: plain_line stays."""
+    True if written, None if the model could not be reached, else False. Every failure is silent: plain_line stays."""
     if not SUMMARY_MODEL:
         return False
     try:
@@ -546,8 +552,11 @@ def summarise(chapter_id, revision):
                            "prompt": SUMMARY_PROMPT.format(asked=ch["prompt"][:600], trail=trail[:800] or "none",
                                                            said="\n".join(ch["replies"])[-2500:])}).encode("utf-8")
         req = urllib.request.Request(OLLAMA_URL.rstrip("/") + "/api/generate", body, {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            line = (json.loads(r.read()).get("response") or "").strip()
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                line = (json.loads(r.read()).get("response") or "").strip()
+        except OSError:  # refused, timed out, or HTTP error (e.g. model not pulled)
+            return None
         if len(line.splitlines()) != 1 or len(line) > 200:
             return False
         con = connect()
@@ -585,7 +594,15 @@ def cmd_summarise_missing():
         rows = con.execute("SELECT id, revision FROM chapters WHERE ai_line IS NULL ORDER BY id DESC").fetchall()
     finally:
         con.close()
-    return f"Summarised {sum(summarise(i, r) for i, r in rows)} of {len(rows)} chapters."
+    done = misses = 0
+    for n, (i, r) in enumerate(rows, 1):
+        got = summarise(i, r)
+        misses = misses + 1 if got is None else 0  # rejected answers are normal; only an unreachable model stops it
+        if misses == 3:
+            return (f"Stopped after {n} of {len(rows)} chapters: the model at {OLLAMA_URL} did not answer "
+                    f"3 times in a row. Summarised {done}.")
+        done += bool(got)
+    return f"Summarised {done} of {len(rows)} chapters."
 
 
 def main(argv):

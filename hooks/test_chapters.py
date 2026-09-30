@@ -212,6 +212,19 @@ with tempfile.TemporaryDirectory() as tmp:
     assert row4 and row4[0] == tr4.stat().st_size, row4
     assert [r[0] for r in db.execute("SELECT prompt FROM chapters WHERE session_id='s4'")] == ["real ask"]
     assert any(sh.startswith("parse-error:") for sh, in db.execute("SELECT shape FROM unknown_shapes"))
+
+    # A stale saved offset is logged, not silently skipped: the transcript shrank, or the session's file moved.
+    log = tmp / "chapter-index.log"
+    text_now = log.read_text(encoding="utf-8")
+    assert "shorter than" not in text_now and "path changed" not in text_now, "normal runs above never trip it"
+    write_lines(tr4, [user("x")])
+    run("record", payload=pay4, env=env)
+    assert "shorter than" in log.read_text(encoding="utf-8")
+    moved = tmp / "moved.jsonl"
+    write_lines(moved, [user("real ask"), asst("oops"), user("next ask")])
+    run("record", payload={**pay4, "transcript_path": str(moved)}, env=env)
+    run("record", payload={**pay4, "transcript_path": str(moved)}, env=env)
+    assert log.read_text(encoding="utf-8").count("path changed") == 1, "logged once, when it changes"
     db.close()
 
 # --- Task 3: lookup ---
@@ -440,7 +453,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert "routine reminder" in b["prompt"], "the model is told the length warning is not the work"
         assert len(b["prompt"]) <= 4500, len(b["prompt"])  # ~4000-char cap on what is sent
         chapters.OLLAMA_URL = "http://127.0.0.1:9"  # nothing listens: silent failure, plain_line stays
-        assert chapters.summarise(c2, r2) is False and ai(db, c2) is None
+        assert chapters.summarise(c2, r2) is None and ai(db, c2) is None, "None = model not reached"
         assert not (tmp / "chapter-index.log").exists(), "a summary failure is not a recording failure"
         chapters.OLLAMA_URL = STUB
         assert chapters.cmd_summarise_missing() == "Summarised 1 of 1 chapters.", "fills only lines still missing"
@@ -452,6 +465,13 @@ with tempfile.TemporaryDirectory() as tmp:
         write_lines(tr, [asst(text("C."))], mode="a")
         assert chapters.record({"session_id": "s5", "transcript_path": str(tr)})[0][0] == c2
         assert ai(db, c2) is None, "growth clears the stale ai_line"
+        write_lines(tr, [user(f"more {i}") for i in range(4)], mode="a")
+        chapters.record({"session_id": "s5", "transcript_path": str(tr)})
+        Stub.answer = "two\nlines"  # rejected answers are normal (~1 in 5), so they never stop a backfill
+        assert chapters.cmd_summarise_missing() == "Summarised 0 of 5 chapters."
+        chapters.OLLAMA_URL = "http://127.0.0.1:9"  # but an unreachable model stops it, not ~40 silent minutes
+        out = chapters.cmd_summarise_missing()
+        assert out.startswith("Stopped after 3 of 5 chapters"), out
     finally:
         chapters.DB_PATH, chapters.LOG_PATH, chapters.SUMMARY_MODEL, chapters.OLLAMA_URL = saved
 
