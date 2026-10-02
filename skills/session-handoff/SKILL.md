@@ -117,6 +117,7 @@ Run the commands exactly as written, in the Bash tool, so a narrow permission ru
 
 ## Deferred + open questions
 - Deferred: <item> — <why pushed to later>
+- Ruled out: <approach tried and abandoned> — <why it failed, so the next agent doesn't retry it>
 - Open: <question needing the user's input> — <context>
 
 ## Pick up here
