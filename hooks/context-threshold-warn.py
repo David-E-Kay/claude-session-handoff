@@ -21,16 +21,6 @@ USAGE_KEYS = (
 )
 
 
-DEBUG_PATH = Path.home() / ".claude" / "hooks" / "context-debug.json"
-
-
-def dump_debug(payload: dict):
-    try:
-        DEBUG_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-
 def used_from_payload(payload: dict):
     cw = payload.get("context_window")
     if not isinstance(cw, dict):
@@ -78,8 +68,6 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return
-
-    dump_debug(payload)
 
     used = used_from_payload(payload)
     if used is None:

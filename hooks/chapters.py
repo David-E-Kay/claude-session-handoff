@@ -23,7 +23,7 @@ NOT_PROMPTS = ("<task-notification>", "<local-command-", "[Request interrupted b
 ARG_KEYS = ("file_path", "notebook_path", "command", "pattern", "description", "url", "skill", "query", "prompt")
 FILE_TOOLS = {"Read": False, "Edit": True, "Write": True, "NotebookEdit": True}  # value = changes the file
 DECISION_CAP = 500
-# The fixed opening line ~/.claude/hooks/context-threshold-warn.py asks for; keep the two in sync.
+# The fixed opening line context-threshold-warn.py asks for; keep the two in sync.
 WARN_LINE = re.compile(r"\A\W*Context check:[^\n]*\n*")
 
 

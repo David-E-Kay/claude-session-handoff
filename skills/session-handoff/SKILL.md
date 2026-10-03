@@ -17,7 +17,7 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
 
 **To look something up** — user asks about earlier work: "what did we decide about X", "why did we do Y last week", "what did that session find", or any near-equivalent question about the past. Go to "Looking up earlier work" below. The user must be asking about the past; a request that merely touches the same topic does not qualify. Exception: also use it when you yourself need a specific fact about earlier work to continue (why something was decided, what an earlier run returned) and it is in neither the handoff nor memory. Name the missing fact first; if you can't name it, don't look.
 
-**Automated trigger:** The `context-threshold-warn.py` hook (`~/.claude/hooks/`) alerts at a fixed 120k tokens of context used, prompting the user to run this skill.
+**Automated trigger:** The plugin's `context-threshold-warn.py` hook alerts at a fixed 120k tokens of context used, prompting the user to run this skill.
 
 ## How to produce the summary
 
@@ -34,7 +34,7 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
 
 ## Where the handoff goes
 
-**One reply, no tool calls.** Print the handoff in chat, once, and stop. The `handoff-save.py` Stop hook (`~/.claude/hooks/`) runs when your reply finishes and saves it to project memory for you: it stamps the filename from the real clock, adds the memory frontmatter, writes `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`, and repoints the single handoff line in `MEMORY.md`. Do not write, edit, or `date` anything yourself — every tool call re-reads the whole conversation, and at handoff time that is 120k+ tokens per step.
+**One reply, no tool calls.** Print the handoff in chat, once, and stop. The plugin's `handoff-save.py` Stop hook runs when your reply finishes and saves it to project memory for you: it stamps the filename from the real clock, adds the memory frontmatter, writes `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`, and repoints the single handoff line in `MEMORY.md`. Do not write, edit, or `date` anything yourself — every tool call re-reads the whole conversation, and at handoff time that is 120k+ tokens per step.
 
 The very first line of the reply must be this marker, with the project memory directory given in your system prompt (`.../projects/<repo-slug>/memory`) as an absolute path:
 
@@ -76,9 +76,9 @@ Climb one rung at a time, and stop as soon as the fact is found:
 | Rung | Command | What it gives |
 |---|---|---|
 | 1 | Newest handoff + topic files (above) | Decisions, running state, next step |
-| 2 | `python ~/.claude/hooks/chapters.py list` | One line per chapter in this project, grouped by session, newest session first. `--before ID` pages to older ones; add `--all-projects` only if the user says the work happened in another repo |
-| 3 | `python ~/.claude/hooks/chapters.py show ID` | That chapter's prompt, replies, numbered actions, and question-box answers |
-| 4 | `python ~/.claude/hooks/chapters.py output ID N` | The raw result of action N — only when the exact output is the fact (an error message, a count) |
+| 2 | `python "${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py" list` | One line per chapter in this project, grouped by session, newest session first. `--before ID` pages to older ones; add `--all-projects` only if the user says the work happened in another repo |
+| 3 | `python "${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py" show ID` | That chapter's prompt, replies, numbered actions, and question-box answers |
+| 4 | `python "${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py" output ID N` | The raw result of action N — only when the exact output is the fact (an error message, a count) |
 
 Run the commands exactly as written, in the Bash tool, so a narrow permission rule matches them.
 

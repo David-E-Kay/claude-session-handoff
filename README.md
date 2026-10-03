@@ -6,7 +6,7 @@ A Claude Code skill + hook pair for wrapping up a session cleanly before you `/c
 - **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that watches token usage and nudges you to run the handoff skill once you cross 120k tokens, before context quality degrades.
 - **`hooks/handoff-save.py`** — a `Stop` hook that does the saving. The skill has Claude print the handoff once in chat; when that reply finishes, the hook writes it to project memory and updates the index. No extra model steps, so a handoff costs one reply instead of four or five. **Required** for the skill to save anything.
 - **`hooks/chapters.py`** — an optional `Stop` hook that records every session, reply by reply, into a small local database (the *chapter index*). When a handoff leaves out a detail you later need, Claude can look it up there, one step at a time. It never runs a model unless you turn on the optional local summaries. See [The chapter index](#the-chapter-index).
-- **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook (matcher `Task`) that catches the same threshold *between* delegated tasks in a subagent-orchestrated run, where no user prompt fires to trigger the hook above.
+- **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook (matcher `Agent`, the subagent tool) that catches the same threshold *between* delegated tasks in a subagent-orchestrated run, where no user prompt fires to trigger the hook above.
 
 They work together but none require each other: the skill can be triggered manually at any time by saying "session handoff" or "resume from before"; the hooks just automate *when* to remember to write one.
 
@@ -56,7 +56,7 @@ They work together but none require each other: the skill can be triggered manua
        ],
        "PreToolUse": [
          {
-           "matcher": "Task",
+           "matcher": "Agent",
            "hooks": [
              {
                "type": "command",
@@ -118,9 +118,9 @@ This is the idea behind [OptMem](https://github.com/VictorTaelin/OptMem) — an 
 
 ## How the two hooks divide the work
 
-`UserPromptSubmit` only fires when you send a message. In a long autonomous run (subagents orchestrated with no per-task user turn) it never sees the threshold crossing until you next type. The `PreToolUse:Task` hook fills that gap: it fires right before the orchestrator spawns the *next* subagent — the natural "between task N and N+1" boundary — and measures the main session's cumulative tokens live at that instant.
+`UserPromptSubmit` only fires when you send a message. In a long autonomous run (subagents orchestrated with no per-task user turn) it never sees the threshold crossing until you next type. The `PreToolUse:Agent` hook fills that gap: it fires right before the orchestrator spawns the *next* subagent — the natural "between task N and N+1" boundary — and measures the main session's cumulative tokens live at that instant.
 
-Why `PreToolUse:Task` and not `SubagentStop`? A `SubagentStop` hook can *measure* the main context, but its output does **not** reach the orchestrator's context, so it can't deliver the warning. `PreToolUse` output (via `additionalContext`) does reach the orchestrator. So the warning rides in just before the next delegation rather than just after the last one — same boundary, and the channel that actually works.
+Why `PreToolUse:Agent` and not `SubagentStop`? A `SubagentStop` hook can *measure* the main context, but its output does **not** reach the orchestrator's context, so it can't deliver the warning. `PreToolUse` output (via `additionalContext`) does reach the orchestrator. So the warning rides in just before the next delegation rather than just after the last one — same boundary, and the channel that actually works.
 
 Both hooks stay silent below the threshold: the scripts run, but they print nothing, so they inject **zero** tokens until a warning actually fires (~100 tokens when it does).
 
