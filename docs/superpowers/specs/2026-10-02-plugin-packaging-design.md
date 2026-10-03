@@ -233,7 +233,16 @@ is untouched, and wiring Codex to the repo copy is part of the later Codex work.
 The live check needs approval for the skill and Bash tools in `-p` mode
 (`--allowedTools`), as the 2026-10-02 spike found.
 
+### Results (2026-10-03, Claude Code 2.1.288, plugin copy at a path containing a space)
+
+- **Manifests:** both validate; the only warning is the missing `version`.
+- **Handoff saves:** yes. `handoff-save.py` ran from the plugin copy and printed "Handoff saved"; the file and the `MEMORY.md` line appeared in the scratch project's memory directory.
+- **Chapters record:** not observable end to end in `-p` mode. A probe hook showed the Stop payload's `transcript_path` does not exist on disk yet when Stop hooks run in `-p` mode (also with `--resume`), so `record()` correctly does nothing. The hook itself ran cleanly from the plugin path, and `chapters.py record` fed the same session's transcript by hand recorded it. Confirm in an interactive session during piece 2.
+- **Lookup reaches the plugin's script:** yes. The skill handed Claude `python "<plugin copy>/hooks/chapters.py" list` with the quotes intact, and that command runs from the path with a space.
+- **`/resume-work`:** both the bare name and `/session-handoff:resume-work` resolve. (Testing from Git Bash needs `MSYS_NO_PATHCONV=1`, or the shell rewrites `/resume-work` into a Windows path.)
+- **Context warning:** no hook errors in the `--debug` log; `~/.claude/hooks/context-debug.json` was last written by another session running the old loose copy, not by the plugin. Unit-level behaviour is covered by `hooks/test_context_warn.py`.
+
 ## Open questions
 
 - ~~`Task` matcher.~~ Resolved 2026-10-03, see `hooks/hooks.json` above.
-- **Bare `/resume-work`.** Answered by the live check above.
+- ~~Bare `/resume-work`.~~ Resolved 2026-10-03: both forms resolve.
