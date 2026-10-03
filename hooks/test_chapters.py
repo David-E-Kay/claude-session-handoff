@@ -7,6 +7,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# A real model in the user's environment would let `record` spawn live summaries mid-test;
+# the stub-server section below sets both back on purpose. Must run before `import chapters`.
+for _var in ("CHAPTER_SUMMARY_MODEL", "CHAPTER_OLLAMA_URL"):
+    os.environ.pop(_var, None)
+
 sys.path.insert(0, str(Path(__file__).parent))
 import chapters  # noqa: E402
 
