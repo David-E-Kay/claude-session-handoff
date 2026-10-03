@@ -69,7 +69,7 @@ def main():
     except Exception:
         return
 
-    used =used_from_payload(payload)
+    used = used_from_payload(payload)
     if used is None:
         transcript_path = payload.get("transcript_path")
         if transcript_path:
