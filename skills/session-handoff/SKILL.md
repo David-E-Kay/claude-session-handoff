@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Two directions, same skill, plus lookup. WRITING — use when the user says "session handoff", "wrap up session", "hand off", "handoff summary", or wants a structured end-of-session summary before clearing context; writes it to project memory and prints it, covering decisions, shipped changes, key files, running state, verification steps, deferrals, and open questions. READING — use when the user explicitly asks to resume — "resume", "resume from before", "resume from last session", "pick up where we left off", "continue from last time", "carry on from yesterday", "catch me up", "where did we leave off", "what was I working on", "load the last handoff", or a near-equivalent explicit request. Loads the stored handoff so a fresh agent continues seamlessly. LOOKUP — also use when the user explicitly asks about earlier work — "what did we decide about X", "why did we do Y last week", "what did that session find", "what was the error when we tried Z", or a near-equivalent question about the past, or when you need a specific fact about earlier work to continue and it is in neither the handoff nor memory; answer from the handoff and memory first, then the chapter index one rung at a time. Do NOT invoke reading or lookup merely because a request resembles earlier work in this repo — reading requires the user to ask, and lookup requires the user to ask or a specific fact you can name that is missing.
+description: Writes, reads, or searches session handoffs. WRITE when the user asks to wrap up or hand off the session, or is about to /clear - print a structured summary (decisions, shipped changes, key files, running state, verification, deferrals, open questions) that a Stop hook saves to project memory. READ only when the user explicitly asks to resume or pick up where they left off. LOOKUP when the user explicitly asks what was decided, found or tried in an earlier session, or when a specific, nameable fact about earlier work is needed and is in neither the handoff nor memory. Do NOT read or look up merely because a request resembles earlier work in this repo.
 ---
 
 # Session Handoff
@@ -24,7 +24,7 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
 1. **Review the full conversation**, not just the last few turns. Handoffs miss things when they only summarize recent context.
 2. **Pull state from these sources (in order):**
    - Plan files referenced this session (check `~/.claude/plans/` if a plan was mentioned).
-   - TodoWrite state — any in-progress or pending tasks.
+   - The session's task list, if one was used — any in-progress or pending tasks.
    - Background processes you started with `run_in_background` — shell IDs are load-bearing for the next agent.
    - Files created or modified this session — you know what you touched; don't grep to re-discover.
    - Memory files written or updated (`~/.claude/projects/<project-slug>/memory/`).
@@ -130,7 +130,7 @@ Run the commands exactly as written, in the Bash tool, so a narrow permission ru
 2. **Never invent state.** If a section has nothing to report, write "none" — do not omit the section. Structure stability is the whole point.
 3. **Absolute paths always.** The next agent may have a different working directory.
 4. **If a plan file drove the session, name it first** in "Key files" so the next agent reads it before anything else.
-5. **No emojis, no hype, no "great job" summaries.** Terse and concrete — paths, commands, shell IDs, decisions. Match the tone of a seasoned engineer handing off at end-of-shift.
+5. **Terse and concrete** — paths, commands, shell IDs, decisions. Match the tone of a seasoned engineer handing off at end-of-shift.
 6. **Background process IDs are critical.** If you started any `run_in_background` shells, their IDs must appear in "Running state" with the kill command — the next agent cannot find them otherwise.
 
 ## Anti-patterns — do not do these
