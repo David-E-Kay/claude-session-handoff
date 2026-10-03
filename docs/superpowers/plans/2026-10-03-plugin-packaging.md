@@ -276,7 +276,7 @@ git commit -m "Stop the length-warning hook writing each prompt to disk"
 
   `hooks/chapters.py:26` comment: `# The fixed opening line ~/.claude/hooks/context-threshold-warn.py asks for; keep the two in sync.` → `# The fixed opening line context-threshold-warn.py asks for; keep the two in sync.`
 
-- [ ] **Step 6: Codex copy** — `mkdir -p codex/skills/session-handoff && cp "C:/Users/david/.codex/skills/session-handoff/SKILL.md" codex/skills/session-handoff/SKILL.md`. Byte-for-byte copy; no edits.
+- [ ] **Step 6: Codex copy** — `mkdir -p codex/skills/session-handoff && cp "~/.codex/skills/session-handoff/SKILL.md" codex/skills/session-handoff/SKILL.md`. Byte-for-byte copy; no edits.
 
 - [ ] **Step 7: Validate, confirm GREEN**
 

@@ -525,7 +525,7 @@ def cmd_rebuild(session_id, all_sessions):
 
 SUMMARY_MODEL = os.environ.get("CHAPTER_SUMMARY_MODEL", "")
 OLLAMA_URL = os.environ.get("CHAPTER_OLLAMA_URL", "http://127.0.0.1:11434")
-# Wording from the dashboard's card summaries (Multi Agent Dashboard/dashboard.py SUMMARY_PROMPT), same model.
+# Wording from the dashboard's card summaries (a separate local dashboard), same model.
 SUMMARY_PROMPT = ("Read one turn of a coding session and say what work it did.\n\n"
                   "THEY ASKED: {asked}\nIT REPLIED: {said}\nTOOLS IT RAN: {trail}\n\n"
                   # older replies open with a free-form length warning; this keeps it out of the summary

@@ -31,7 +31,7 @@ Produce a repeatable end-of-session summary so the user can start a fresh Codex 
 
 Codex memory is not Claude's per-repository `~/.claude/projects/.../memory/` layout. Use Codex's supported append-only note log instead:
 
-`C:\Users\david\.codex\memories\extensions\ad_hoc\notes\`
+`~\.codex\memories\extensions\ad_hoc\notes\`
 
 1. Determine the project slug: use the Git repository directory name when the task is inside a repository; otherwise use the current workspace directory name. Preserve the absolute project/workspace path in the entry so similarly named projects never collide.
 2. Create one new file named `<YYYY-MM-DD-HHmmss>-session-handoff-<project-slug>.md`. The timestamp must sort newest-last alphabetically.
@@ -44,7 +44,7 @@ Codex memory is not Claude's per-repository `~/.claude/projects/.../memory/` lay
    - Logged: `<YYYY-MM-DD HH:MM local timezone>`
    ```
 
-4. Do not edit `C:\Users\david\.codex\memories\MEMORY.md`, `memory_summary.md`, or `rollout_summaries`. Codex manages those indexes. The append-only note is the durable project log and the supported path for the memory service to consolidate into its index.
+4. Do not edit `~\.codex\memories\MEMORY.md`, `memory_summary.md`, or `rollout_summaries`. Codex manages those indexes. The append-only note is the durable project log and the supported path for the memory service to consolidate into its index.
 5. Never edit or delete an earlier `*-session-handoff-*.md` entry. The log is history; a new handoff always creates a new file.
 6. Print the same handoff body in chat so the user can read it without opening the log file.
 
@@ -53,7 +53,7 @@ Codex memory is not Claude's per-repository `~/.claude/projects/.../memory/` lay
 When the user explicitly asks to resume, do this before answering, exploring, or touching code:
 
 1. Determine the current project/workspace path and project slug using the writing rule above.
-2. In `C:\Users\david\.codex\memories\extensions\ad_hoc\notes\`, find `*-session-handoff-<project-slug>.md` entries whose `Project:` value exactly matches the current project/workspace path. Read the alphabetically last entry.
+2. In `~\.codex\memories\extensions\ad_hoc\notes\`, find `*-session-handoff-<project-slug>.md` entries whose `Project:` value exactly matches the current project/workspace path. Read the alphabetically last entry.
 3. Read the files named under "Key files for next task", including any plan file.
 4. Report the "Pick up here" line to the user in one sentence, then proceed.
 

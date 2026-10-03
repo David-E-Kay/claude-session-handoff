@@ -30,7 +30,7 @@ Out (later sub-projects): Jev ranking of the chapter list, MCP tool-server
 wrapper around the lookup commands, plugin packaging (`.claude-plugin/`),
 trimming the handoff template, a command to delete chapters, and:
 
-- **Dashboard reuse** (in the Multi Agent Dashboard repo): evaluate the board
+- **Dashboard reuse** (in a separate dashboard repo): evaluate the board
   reading the chapter's `ai_line` (Part 3) instead of making its own Ollama call
   for the latest turn. First step: check whether the board summarises mid-reply
   or only after a reply ends. Adopt only if cards update no slower, mid-reply

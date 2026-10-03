@@ -200,7 +200,7 @@ doesn't exist, so the write fails silently anyway. Delete `DEBUG_PATH`,
 
 ### Codex copy
 
-`C:\Users\david\.codex\skills\session-handoff\SKILL.md` is copied to
+`~\.codex\skills\session-handoff\SKILL.md` is copied to
 `codex/skills/session-handoff/SKILL.md`. Claude Code scans only the top-level
 `skills/` folder, so it never loads this copy. Storage only: Codex's own install
 is untouched, and wiring Codex to the repo copy is part of the later Codex work.

@@ -1431,7 +1431,7 @@ Decisions taken while detailing (for Gate 1):
 1. **Default URL is `127.0.0.1`, not the spec's `localhost`.** Measured on David's machine: every request to
    `localhost:11434` takes 2.06 s longer than to `127.0.0.1:11434` (Windows tries IPv6 `::1` first; Ollama
    listens on IPv4 only). That is +40 min across a `--missing` back-fill. The dashboard already uses
-   `127.0.0.1` (`Multi Agent Dashboard/dashboard.py:117`).
+   `127.0.0.1` (a separate local dashboard).
 2. **A chapter that grows clears its `ai_line`.** The spec says the line is "written once per chapter
    revision"; without clearing, a grown chapter keeps a summary of its earlier part forever if Ollama is down,
    and `--missing` never refreshes it. Cost: `list` shows the plain line for the few seconds until the new summary
@@ -1663,7 +1663,7 @@ Just above `def main(argv):`:
 ```python
 SUMMARY_MODEL = os.environ.get("CHAPTER_SUMMARY_MODEL", "")
 OLLAMA_URL = os.environ.get("CHAPTER_OLLAMA_URL", "http://127.0.0.1:11434")
-# Wording from the dashboard's card summaries (Multi Agent Dashboard/dashboard.py SUMMARY_PROMPT), same model.
+# Wording from the dashboard's card summaries (a separate local dashboard), same model.
 SUMMARY_PROMPT = ("Read one turn of a coding session and say what work it did.\n\n"
                   "THEY ASKED: {asked}\nIT REPLIED: {said}\nTOOLS IT RAN: {trail}\n\n"
                   # older replies open with a free-form length warning; this keeps it out of the summary
@@ -2030,9 +2030,9 @@ master — merging is the finishing step, after the final Codex review).
 `context-threshold-handoff-task.py`, `handoff-save.py` identical to the repo (CR-insensitive); `chapters.py`
 absent. `~/.claude/skills/session-handoff/SKILL.md` identical to master `7216f68` (no local edits, safe to
 replace); `~/.claude/skills/resume-work/` absent. `~/.claude/chapter-index.db` absent. Python 3.14.5 at
-`/c/Python314/python`. Ollama up with `qwen2.5:1.5b-instruct`. `~/.claude/projects/`: 45 project dirs, 457
+Python 3.14. Ollama up with `qwen2.5:1.5b-instruct`. `~/.claude/projects/`: 45 project dirs, 457
 `.jsonl` files, 329 MB. `~/.claude/settings.json`: `"env"` holds only `PYTHONIOENCODING`; every hook command
-uses the absolute form `python "C:/Users/david/.claude/hooks/<x>.py"`; `"Stop"` has one entry,
+uses the absolute form `python "~/.claude/hooks/<x>.py"`; `"Stop"` has one entry,
 `handoff-save.py`; `permissions.allow` has `Bash(pip:*)`, `Bash(pip3:*)` (pre-existing, untouched here).
 
 - [x] **Step 1: Back up.** Copy `~/.claude/settings.json` and `~/.claude/skills/session-handoff/SKILL.md` to
@@ -2048,7 +2048,7 @@ uses the absolute form `python "C:/Users/david/.claude/hooks/<x>.py"`; `"Stop"` 
 - [x] **Step 4: Register in `settings.json`** (one edit, then parse it with `python -m json.tool` — a broken
   file disables every hook). Append to the existing `"Stop"` entry's `"hooks"` array, after
   `handoff-save.py`, matching the file's absolute-path form:
-  `{"type": "command", "command": "python \"C:/Users/david/.claude/hooks/chapters.py\" record"}`.
+  `{"type": "command", "command": "python \"~/.claude/hooks/chapters.py\" record"}`.
   David chose both at Gate 1 (2026-09-28): `"CHAPTER_SUMMARY_MODEL": "qwen2.5:1.5b-instruct"` in `"env"`, and
   `"Bash(python ~/.claude/hooks/chapters.py:*)"` in `permissions.allow` (the `~` form, because the rule
   matches the command text the skill runs; covers this script only, never `python` in general).
