@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse(Task) hook: warn the orchestrator when main-session context has
+"""PreToolUse(Agent) hook: warn the orchestrator when main-session context has
 crossed THRESHOLD_TOKENS as it's about to spawn another subagent/task.
 
 The UserPromptSubmit sibling hook (context-threshold-warn.py) only fires on a
 user prompt, so during a long autonomous multi-task run (subagents orchestrated
 with no per-task user turn) it never sees the threshold crossing. This one fires
-at each Task spawn — the natural "between task N and N+1" boundary — and injects
+at each subagent spawn — the natural "between task N and N+1" boundary — and injects
 its warning via additionalContext, the one channel that reaches the orchestrator
 (SubagentStop output does not). Always exits 0 — never blocks the spawn.
 """
@@ -61,8 +61,6 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return  # fail open
-    if payload.get("tool_name") != "Task":
-        return
     transcript_path = payload.get("transcript_path")
     if not transcript_path:
         return
