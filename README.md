@@ -12,75 +12,27 @@ They work together but none require each other: the skill can be triggered manua
 
 ## Install
 
-1. **Copy the skills:**
-   ```
-   cp -r skills/session-handoff ~/.claude/skills/session-handoff
-   cp -r skills/resume-work ~/.claude/skills/resume-work
-   ```
+Install it as a Claude Code plugin. The repo is its own plugin marketplace:
 
-2. **Copy the hooks:**
-   ```
-   cp hooks/context-threshold-warn.py ~/.claude/hooks/context-threshold-warn.py
-   cp hooks/context-threshold-handoff-task.py ~/.claude/hooks/context-threshold-handoff-task.py
-   cp hooks/handoff-save.py ~/.claude/hooks/handoff-save.py
-   cp hooks/chapters.py ~/.claude/hooks/chapters.py
-   ```
+```
+claude plugin marketplace add David-E-Kay/claude-session-handoff
+claude plugin install session-handoff@session-handoff
+```
 
-3. **Register the hooks** by merging this into your `~/.claude/settings.json` (create the file if it doesn't exist):
-   ```json
-   {
-     "hooks": {
-       "UserPromptSubmit": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "python \"~/.claude/hooks/context-threshold-warn.py\""
-             }
-           ]
-         }
-       ],
-       "Stop": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "python \"~/.claude/hooks/handoff-save.py\""
-             },
-             {
-               "type": "command",
-               "command": "python \"~/.claude/hooks/chapters.py\" record"
-             }
-           ]
-         }
-       ],
-       "PreToolUse": [
-         {
-           "matcher": "Agent",
-           "hooks": [
-             {
-               "type": "command",
-               "command": "python \"~/.claude/hooks/context-threshold-handoff-task.py\""
-             }
-           ]
-         }
-       ]
-     }
-   }
-   ```
-   If you already have `UserPromptSubmit`, `Stop` or `PreToolUse` arrays, append these entries rather than replacing the arrays. Use an absolute path (not `~`) on Windows.
+Then start a new Claude Code session. The plugin registers the skills and all four hooks itself; there is nothing to copy and no `settings.json` to edit. The hooks run `python`, so it needs to be on your PATH.
 
-   The second hook is optional — skip it if you don't run subagent-orchestrated plans and only want the prompt-time warning. The `chapters.py` entry is optional too — handoffs work without it.
+**Updates.** Auto-update is off by default for marketplaces other than Anthropic's. Turn it on under `/plugin` → Marketplaces, or update by hand with `claude plugin update session-handoff@session-handoff`, then start a new session.
 
-4. **Fill the chapter index from past sessions** (optional, once):
-   ```
-   python ~/.claude/hooks/chapters.py import
-   ```
-   Reads every existing transcript under `~/.claude/projects/` and records it. Safe to re-run: already-recorded material is skipped. About a minute for a few hundred sessions. In PowerShell, `~` isn't expanded here; use `python $HOME\.claude\hooks\chapters.py import`.
+**Lookup approvals.** Claude asks before each chapter-index lookup, because the plugin can't pre-approve its own commands. Approving is safe: the command only reads the local index.
 
-5. **Allow the lookups without a prompt each time** (optional): add `"Bash(python ~/.claude/hooks/chapters.py:*)"` to `permissions.allow` in `~/.claude/settings.json`. This rule covers only this script, never `python` in general. Keep the `~` form even on Windows: the rule matches the command text Claude runs, which is written that way in the skill.
+**Fill the chapter index from past sessions** (optional, once). The index lives at `~/.claude/chapter-index.db` whichever copy of the script writes to it, so run the import from a clone of this repo:
+```
+git clone https://github.com/David-E-Kay/claude-session-handoff
+python claude-session-handoff/hooks/chapters.py import
+```
+Reads every existing transcript under `~/.claude/projects/` and records it. Safe to re-run: already-recorded material is skipped. About a minute for a few hundred sessions.
 
-6. Restart/start a new Claude Code session for the hooks and skills to take effect.
+**Upgrading from the old manual install?** Remove the copies in `~/.claude/skills/session-handoff`, `~/.claude/skills/resume-work` and the four scripts in `~/.claude/hooks/`, plus their four hook entries in `~/.claude/settings.json`. Otherwise both copies run and every handoff is saved twice. Your handoffs and chapter index are not affected.
 
 ## Usage
 
@@ -139,7 +91,7 @@ Claude reads it only when the handoff and memory lack a fact, and climbs one run
 
 Sizes measured on 257 real sessions. The rungs are similar in size. The cost of going deeper is that each step is one more read on top of the last, so Claude stops as soon as it has the fact. Rung 4 needs the original transcript; if Claude Code has since deleted it, rung 4 says so, and rungs 2 and 3 still work.
 
-**Optional one-line summaries.** By default each chapter's line in `list` is built from your prompt and the first sentence of Claude's reply. For a tidier line, set `CHAPTER_SUMMARY_MODEL` to a local [Ollama](https://ollama.com) model (for example `qwen2.5:1.5b-instruct`) in the `"env"` block of `~/.claude/settings.json`, and `CHAPTER_OLLAMA_URL` if Ollama isn't at `http://127.0.0.1:11434`. Nothing leaves your machine. To summarise chapters recorded before you turned it on, run `python ~/.claude/hooks/chapters.py summarise --missing`. Start Ollama first: if it's down, the command stops after 3 chapters in a row get no answer, and says so. The `"env"` block only applies inside Claude Code, so either set `CHAPTER_SUMMARY_MODEL` in that terminal as well, or ask Claude to run the command for you.
+**Optional one-line summaries.** By default each chapter's line in `list` is built from your prompt and the first sentence of Claude's reply. For a tidier line, set `CHAPTER_SUMMARY_MODEL` to a local [Ollama](https://ollama.com) model (for example `qwen2.5:1.5b-instruct`) in the `"env"` block of `~/.claude/settings.json`, and `CHAPTER_OLLAMA_URL` if Ollama isn't at `http://127.0.0.1:11434`. Nothing leaves your machine. To summarise chapters recorded before you turned it on, run `python hooks/chapters.py summarise --missing` from a clone of this repo. Start Ollama first: if it's down, the command stops after 3 chapters in a row get no answer, and says so. The `"env"` block only applies inside Claude Code, so either set `CHAPTER_SUMMARY_MODEL` in that terminal as well, or ask Claude to run the command for you.
 
 **Checking on it now and then.** `chapters.py status` shows when it last recorded, any recent errors, and how many unrecognised message shapes are waiting. A message shape is the form a line of the transcript takes; the recorder only starts chapters at shapes it knows are typed prompts, and logs anything new instead of guessing. `chapters.py unknowns` lists them with a sample. If one is harmless, hide it with `chapters.py unknowns --mark-reviewed SHAPE`. If it should have been a prompt, that's a bug to report.
 
