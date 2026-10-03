@@ -132,7 +132,7 @@ The same four registrations as the README's manual install and David's current
       ] }
     ],
     "PreToolUse": [
-      { "matcher": "Task", "hooks": [
+      { "matcher": "Agent", "hooks": [
         { "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/context-threshold-handoff-task.py\"" }
       ] }
     ],
@@ -150,8 +150,13 @@ Shell form, with the variable inside double quotes, matching the commands that
 already run on David's machine (shell form runs under Git Bash on Windows).
 Exec form (`command` plus `args`) was considered: it avoids quoting entirely,
 but on Windows it needs `command` to resolve to a real `.exe`, and `python`
-may be a Microsoft Store alias. Shell form is the proven path. The `Task`
-matcher is carried over unchanged (see Open questions).
+may be a Microsoft Store alias. Shell form is the proven path.
+
+The matcher is `Agent`, the subagent tool's current name. Live check
+2026-10-03: a `Task` matcher still fires (Claude Code keeps it as an alias),
+but the payload's `tool_name` is `Agent`, and
+`context-threshold-handoff-task.py` quit unless it saw `Task`, so the warning
+never fired. Fixed by removing that check; the matcher already filters.
 
 Unlike the manual install, the plugin makes all four hooks mandatory: the
 optional `chapters.py` and `PreToolUse` entries can no longer be skipped
@@ -162,8 +167,8 @@ individually. Accepted; both stay silent until they have something to do.
 `skills/session-handoff/SKILL.md`:
 - Lines 79–81, the three lookup commands:
   `python ~/.claude/hooks/chapters.py list` →
-  `python ${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py list` (likewise `show ID`,
-  `output ID N`). Spike 2026-10-02 confirmed Claude Code substitutes the
+  `python "${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py" list` (likewise `show ID`,
+  `output ID N`). Quoted so an install path containing a space still works. Spike 2026-10-02 confirmed Claude Code substitutes the
   variable in a plugin SKILL.md body, with forward slashes on Windows.
 - Lines 20 and 37, which mention `~/.claude/hooks/` as where a hook lives:
   reword to "the plugin's" hook, no path.
@@ -230,8 +235,5 @@ The live check needs approval for the skill and Bash tools in `-p` mode
 
 ## Open questions
 
-- **`Task` matcher.** The subagent tool is now named `Agent` in current Claude
-  Code. If the `Task` matcher no longer matches it, `context-threshold-handoff-task.py`
-  never fires, in the plugin or in the current manual install. Carried over
-  unchanged here; checking and fixing it is separate work.
+- ~~`Task` matcher.~~ Resolved 2026-10-03, see `hooks/hooks.json` above.
 - **Bare `/resume-work`.** Answered by the live check above.
