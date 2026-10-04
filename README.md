@@ -1,14 +1,15 @@
 # claude-session-handoff
 
-A Claude Code skill + hook pair for wrapping up a session cleanly before you `/clear` or run out of context — and picking it back up in the next one.
+A Claude Code plugin that lets you end a session and pick it up later without losing the thread.
 
-- **`skills/session-handoff/SKILL.md`** — runs in two directions, plus lookup. **Writing:** produces a structured handoff summary (decisions, key files, running state, verification steps, open questions) and stores it in the repo's project memory directory, so there's nothing to copy-paste. **Reading:** when you explicitly ask to resume, loads that stored handoff back into a fresh session. **Lookup:** when you ask about earlier work (or Claude needs a specific past fact to continue) and the handoff doesn't have the answer, looks it up in the chapter index.
-- **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that watches token usage and nudges you to run the handoff skill once you cross 120k tokens, before context quality degrades.
-- **`hooks/handoff-save.py`** — a `Stop` hook that does the saving. The skill has Claude print the handoff once in chat; when that reply finishes, the hook writes it to project memory and updates the index. No extra model steps, so a handoff costs one reply instead of four or five. **Required** for the skill to save anything.
-- **`hooks/chapters.py`** — an optional `Stop` hook that records every session, reply by reply, into a small local database (the *chapter index*). When a handoff leaves out a detail you later need, Claude can look it up there, one step at a time. It never runs a model unless you turn on the optional local summaries. See [The chapter index](#the-chapter-index).
-- **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook (matcher `Agent`, the subagent tool) that catches the same threshold *between* delegated tasks in a subagent-orchestrated run, where no user prompt fires to trigger the hook above.
+Long Claude Code sessions run out of room. Once the context fills up, answers get worse, and `/clear` or `/compact` throws away what Claude knew: what you decided, which files matter, what was still running, what to do next. Starting over means explaining it all again.
 
-They work together but none require each other: the skill can be triggered manually at any time by saying "session handoff" or "resume from before"; the hooks just automate *when* to remember to write one.
+This plugin turns that into two phrases:
+
+1. Near the end of a session, say **"session handoff"**. Claude writes a short, structured summary of the session, and the plugin saves it to the project's memory. You'll see `Handoff saved to …`.
+2. In a fresh session, say **"resume from before"** (or type `/resume-work`). Claude reads the summary, opens the files it names, and tells you where you left off.
+
+It also reminds you when a session reaches 120k tokens, so you hand off before quality drops. And it keeps a local record of every session (the *chapter index*), so when you later ask "what did we decide about the database last week?", Claude can find the answer even if no summary mentioned it.
 
 ## Install
 
@@ -19,11 +20,19 @@ claude plugin marketplace add David-E-Kay/claude-session-handoff
 claude plugin install session-handoff@session-handoff
 ```
 
-Then start a new Claude Code session. The plugin registers the skills and all four hooks itself; there is nothing to copy and no `settings.json` to edit. The hooks run `python`, so it needs to be on your PATH.
+Then start a new Claude Code session. The plugin registers its skills and hooks itself; there is nothing to copy.
+
+**Requirements.** Claude Code and Python 3. The plugin runs `python`, or `python3` where `python` doesn't exist (as on most Macs). It only uses Python's standard library, so there is nothing to `pip install`.
 
 **Updates.** Auto-update is off by default for marketplaces other than Anthropic's. Turn it on under `/plugin` → Marketplaces, or update by hand with `claude plugin update session-handoff@session-handoff`, then start a new session.
 
-**Lookup approvals.** Claude asks before each chapter-index lookup, because the plugin can't pre-approve its own commands. Approving is safe: the command only reads the local index.
+**Lookup approvals (optional).** When Claude looks something up in the chapter index, it runs a command called `chapter-index`, and Claude Code asks you to approve it each time. A plugin can't pre-approve its own commands. To stop the prompts, add this one rule to `permissions.allow` in `~/.claude/settings.json`:
+
+```json
+"Bash(chapter-index:*)"
+```
+
+It covers only that one command, which reads your local index and changes nothing. It names no folder, so it keeps working after plugin updates.
 
 **Fill the chapter index from past sessions** (optional, once). The index lives at `~/.claude/chapter-index.db` whichever copy of the script writes to it, so run the import from a clone of this repo:
 ```
@@ -48,9 +57,27 @@ Run it whenever the next thing you'd do is `/clear`, `/compact`, or close the wi
 
 Start unrelated work in the same repo and you say neither — nothing stale loads. See [How handoffs persist across sessions](#how-handoffs-persist-across-sessions) for why that's a phrasing decision rather than a judgment call.
 
+## Your data stays on your machine
+
+The plugin sends nothing anywhere. Everything it writes stays in your `~/.claude/` folder:
+
+- **Handoffs** go to Claude Code's own per-project memory folder, `~/.claude/projects/<repo>/memory/`, as `handoff-<date>.md` files. Claude Code loads that folder's `MEMORY.md` index at the start of each session in that repo, as it always does.
+- **The chapter index** is one file, `~/.claude/chapter-index.db`. It holds a plain-text copy of your prompts, Claude's replies, and a list of the actions Claude took, but not the actions' output. Treat it like Claude Code's own transcripts, which hold the same material and more. Delete the file to wipe it.
+- **Optional summaries** use [Ollama](https://ollama.com), a program that runs AI models on your own computer. They're off unless you turn them on (see below). If you point `CHAPTER_OLLAMA_URL` at another computer, chapter text is sent there.
+
+## What's inside
+
+- **`skills/session-handoff/SKILL.md`** — writes handoffs, reads them back when you ask to resume, and looks up earlier work in the chapter index when the handoff doesn't have the answer.
+- **`skills/resume-work/SKILL.md`** — the `/resume-work` shortcut.
+- **`hooks/handoff-save.py`** — a `Stop` hook (it runs when Claude finishes a reply) that saves the handoff to project memory. Claude prints the handoff once in chat and the hook does the saving, so a handoff costs one reply instead of four or five.
+- **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that nudges you to hand off once the session passes 120k tokens.
+- **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook that catches the same threshold between subagent tasks, where no prompt of yours would trigger the hook above.
+- **`hooks/chapters.py`** — a `Stop` hook that records each session into the chapter index, plus the lookup commands. See [The chapter index](#the-chapter-index).
+- **`bin/chapter-index`** — the short command Claude runs for lookups, so one allow rule covers them.
+
 ## Notes
 
-- Each hook's `THRESHOLD_TOKENS` (default 120,000) is a fixed cutoff, not model-aware. Adjust it in the scripts if you're on a smaller context window (set both to keep them in sync).
+- The 120,000-token reminder is a fixed cutoff. It doesn't adjust to your model's context window, and there is no setting to change it yet. Editing the number in the installed scripts won't last: a plugin update replaces them.
 - Running the skill twice in a session is safe: it writes a new dated handoff file and repoints the single index line at it.
 
 ## How handoffs persist across sessions
@@ -85,9 +112,9 @@ Claude reads it only when the handoff and memory lack a fact, and climbs one run
 | Rung | Command | Typical size |
 |---|---|---|
 | 1 | Read the newest handoff | ~5k characters |
-| 2 | `chapters.py list` — one line per chapter in this project | ~11k characters for 66 chapters; capped at 150 |
-| 3 | `chapters.py show ID` — one chapter in full | ~4k characters (cap 6k, `--full` lifts it) |
-| 4 | `chapters.py output ID N` — the raw result of action N, read back from the original transcript | ~0.4k characters (cap 3k) |
+| 2 | `chapter-index list` — one line per chapter in this project | ~11k characters for 66 chapters; capped at 150 |
+| 3 | `chapter-index show ID` — one chapter in full | ~4k characters (cap 6k, `--full` lifts it) |
+| 4 | `chapter-index output ID N` — the raw result of action N, read back from the original transcript | ~0.4k characters (cap 3k) |
 
 Sizes measured on 257 real sessions. The rungs are similar in size. The cost of going deeper is that each step is one more read on top of the last, so Claude stops as soon as it has the fact. Rung 4 needs the original transcript; if Claude Code has since deleted it, rung 4 says so, and rungs 2 and 3 still work.
 
@@ -104,3 +131,11 @@ Sizes measured on 257 real sessions. The rungs are similar in size. The cost of 
 `skills/session-handoff/SKILL.md` credit: [Nate Herk](https://www.linkedin.com/in/nateherkelman/).
 
 The persistence model — append-only memory log plus a small budget of it read at wake time — is borrowed from [OptMem](https://github.com/VictorTaelin/OptMem) by [Victor Taelin](https://github.com/VictorTaelin).
+
+## Design history
+
+`docs/superpowers/` holds the design notes and build plans behind each piece of this plugin, written as the work was done. You don't need them to use it.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

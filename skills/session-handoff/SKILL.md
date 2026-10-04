@@ -76,9 +76,9 @@ Climb one rung at a time, and stop as soon as the fact is found:
 | Rung | Command | What it gives |
 |---|---|---|
 | 1 | Newest handoff + topic files (above) | Decisions, running state, next step |
-| 2 | `python "${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py" list` | One line per chapter in this project, grouped by session, newest session first. `--before ID` pages to older ones; add `--all-projects` only if the user says the work happened in another repo |
-| 3 | `python "${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py" show ID` | That chapter's prompt, replies, numbered actions, and question-box answers |
-| 4 | `python "${CLAUDE_PLUGIN_ROOT}/hooks/chapters.py" output ID N` | The raw result of action N — only when the exact output is the fact (an error message, a count) |
+| 2 | `chapter-index list` | One line per chapter in this project, grouped by session, newest session first. `--before ID` pages to older ones; add `--all-projects` only if the user says the work happened in another repo |
+| 3 | `chapter-index show ID` | That chapter's prompt, replies, numbered actions, and question-box answers |
+| 4 | `chapter-index output ID N` | The raw result of action N — only when the exact output is the fact (an error message, a count) |
 
 Run the commands exactly as written, in the Bash tool, so a narrow permission rule matches them.
 
