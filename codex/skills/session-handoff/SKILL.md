@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Two directions, one Codex skill. WRITING — use when the user says "session handoff", "wrap up session", "hand off", "handoff summary", or wants a structured end-of-session summary before clearing context; writes an append-only project handoff entry to Codex memory notes and prints it, covering decisions, shipped changes, key files, running state, verification, deferrals, and open questions. READING — use only when the user explicitly asks to resume: "resume", "resume from before", "resume from last session", "pick up where we left off", "continue from last time", "carry on from yesterday", "catch me up", "where did we leave off", "what was I working on", "load the last handoff", or a near-equivalent. Loads the stored handoff so a fresh Codex task continues seamlessly. Do not invoke the reading half merely because a request resembles earlier work in this project.
+description: Two directions, one Codex skill. WRITING — use when the user says "session handoff", "wrap up session", "hand off", "handoff summary", or wants a structured end-of-session summary before clearing context; writes an append-only project handoff entry to Codex memory notes and prints it, covering decisions, shipped changes, key files, running state, verification, exact strings, ruled-out approaches, deferrals, and open questions. READING — use only when the user explicitly asks to resume: "resume", "resume from before", "resume from last session", "pick up where we left off", "continue from last time", "carry on from yesterday", "catch me up", "where did we leave off", "what was I working on", "load the last handoff", or a near-equivalent. Loads the stored handoff so a fresh Codex task continues seamlessly. Do not invoke the reading half merely because a request resembles earlier work in this project.
 ---
 
 # Session Handoff
@@ -25,6 +25,7 @@ Produce a repeatable end-of-session summary so the user can start a fresh Codex 
    - Memory files read or updated, if relevant.
    - Unresolved user questions or deferred decisions.
 3. Do not audit the filesystem. This is a synthesis of what happened in this task; use targeted checks only when they materially improve accuracy.
+   - One exception: carry dead ends forward. If this task began by reading a handoff, copy each of its "Tried and ruled out" entries that still applies into the new handoff, keeping its original date. Drop an entry once the work it concerns is finished or abandoned.
 4. Write the handoff to the Codex project-memory log, then print the same handoff in chat.
 
 ## Codex project-memory log and index
@@ -87,9 +88,16 @@ Use exactly this structure every time:
 - `<command>` — <expected outcome>
 - ...
 
+## Exact strings
+- `<copied character for character: an unresolved error message, a constraint in the user's own words, a value or flag the next step depends on>` — <what it is and where it came from>
+- ...
+
+## Tried and ruled out
+- <approach tried and abandoned> — <why it failed, so the next agent doesn't retry it> (<YYYY-MM-DD ruled out>)
+- ...
+
 ## Deferred + open questions
 - Deferred: <item> — <why pushed to later>
-- Ruled out: <approach tried and abandoned> — <why it failed, so the next agent doesn't retry it>
 - Open: <question needing user input> — <context>
 
 ## Pick up here
@@ -105,6 +113,7 @@ Use exactly this structure every time:
 5. Keep the tone terse and concrete: paths, commands, decisions, and current state. No emojis, hype, or retrospective.
 6. Include background-process details when any were started; otherwise write "none".
 7. Resuming is opt-in by the user's phrasing, not topic similarity. The memory index must not make unrelated work load a stale handoff.
+8. Copy exact strings, never reword them: error text, commands, config keys and values, and constraints the user stated, in backticks exactly as they appeared.
 
 ## Anti-patterns
 

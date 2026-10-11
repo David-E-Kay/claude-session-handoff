@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Writes, reads, or searches session handoffs. WRITE when the user asks to wrap up or hand off the session, or is about to /clear - print a structured summary (decisions, shipped changes, key files, running state, verification, deferrals, open questions) that a Stop hook saves to project memory. READ only when the user explicitly asks to resume or pick up where they left off. LOOKUP when the user explicitly asks what was decided, found or tried in an earlier session, or when a specific, nameable fact about earlier work is needed and is in neither the handoff nor memory. Do NOT read or look up merely because a request resembles earlier work in this repo.
+description: Writes, reads, or searches session handoffs. WRITE when the user asks to wrap up or hand off the session, or is about to /clear - print a structured summary (decisions, shipped changes, key files, running state, verification, exact strings, ruled-out approaches, deferrals, open questions) that a Stop hook saves to project memory. READ only when the user explicitly asks to resume or pick up where they left off. LOOKUP when the user explicitly asks what was decided, found or tried in an earlier session, or when a specific, nameable fact about earlier work is needed and is in neither the handoff nor memory. Do NOT read or look up merely because a request resembles earlier work in this repo.
 ---
 
 # Session Handoff
@@ -30,6 +30,7 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
    - Memory files written or updated (`~/.claude/projects/<project-slug>/memory/`).
    - Unresolved questions — things you asked the user that never got a clear answer, or things the user asked that got deflected.
 3. **Do NOT audit the filesystem.** This is synthesis of what happened in THIS session. No `git log`, no broad `Glob` sweeps. If you didn't touch it this session, it doesn't belong here.
+   - One exception: **carry dead ends forward.** If this session began by reading a handoff, its "Tried and ruled out" entries are already in your context. Copy each one that still applies into the new handoff, keeping its original date, so a dead end is not lost when only the newest handoff is read. Drop an entry once the work it concerns is finished or abandoned, or it has been promoted to a topic file. If the old handoff is not in your context, carry nothing — do not open it.
 4. **Print it once in chat, starting with the memory-dir marker; the Stop hook saves it.** See "Where the handoff goes" below.
 
 ## Where the handoff goes
@@ -115,9 +116,16 @@ Run the commands exactly as written, in the Bash tool, so a narrow permission ru
 - `<command>` — <expected outcome>
 - ...
 
+## Exact strings
+- `<copied character for character: an unresolved error message, a constraint in the user's own words, a value or flag the next step depends on>` — <what it is and where it came from>
+- ...
+
+## Tried and ruled out
+- <approach tried and abandoned> — <why it failed, so the next agent doesn't retry it> (<YYYY-MM-DD ruled out>)
+- ...
+
 ## Deferred + open questions
 - Deferred: <item> — <why pushed to later>
-- Ruled out: <approach tried and abandoned> — <why it failed, so the next agent doesn't retry it>
 - Open: <question needing the user's input> — <context>
 
 ## Pick up here
@@ -132,6 +140,8 @@ Run the commands exactly as written, in the Bash tool, so a narrow permission ru
 4. **If a plan file drove the session, name it first** in "Key files" so the next agent reads it before anything else.
 5. **Terse and concrete** — paths, commands, shell IDs, decisions. Match the tone of a seasoned engineer handing off at end-of-shift.
 6. **Background process IDs are critical.** If you started any `run_in_background` shells, their IDs must appear in "Running state" with the kill command — the next agent cannot find them otherwise.
+7. **Copy exact strings, never reword them.** Error text, commands, config keys and values, and constraints the user stated go in backticks exactly as they appeared — these are what a summary drops first, and a paraphrased error cannot be searched for later.
+   <!-- ponytail: "Tried and ruled out" is carried forward by the writer, not stored in a ledger. If it grows past ~10 entries, that is the signal to promote the list into a topic file, not to add a file now. -->
 
 ## Anti-patterns — do not do these
 

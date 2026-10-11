@@ -86,4 +86,21 @@ with tempfile.TemporaryDirectory() as tmp:
     run({"hook_event_name": "Stop", "last_assistant_message": handoff(mem2)})
     assert (mem2 / "MEMORY.md").read_text(encoding="utf-8").count("](handoff-") == 1
 
+    # 6. Exact strings and ruled-out entries are saved byte for byte, and stay out of the pointer.
+    mem3 = tmp / "exact"
+    mem3.mkdir()
+    exact = "`Error: ENOENT: no such file, open 'C:\\Users\\x\\a b.json'` — from `npm run build` | 2>&1"
+    text = (
+        f"<!-- handoff-memory-dir: {mem3} -->\n"
+        "# Session Handoff — Exact\n\n"
+        f"## Exact strings\n- {exact}\n\n"
+        "## Tried and ruled out\n- Pinning node 18 — still fails (2026-10-10)\n\n"
+        "## Pick up here\nFix the path.\n"
+    )
+    run({"hook_event_name": "Stop", "last_assistant_message": text})
+    saved = handoffs(mem3)[0].read_text(encoding="utf-8")
+    assert f"- {exact}\n" in saved and "(2026-10-10)" in saved, saved
+    pointer = (mem3 / "MEMORY.md").read_text(encoding="utf-8")
+    assert pointer.endswith("Pick up here: Fix the path.\n") and "ENOENT" not in pointer, pointer
+
 print("ok")
