@@ -140,7 +140,7 @@ Run the commands exactly as written, in the Bash tool, so a narrow permission ru
 4. **If a plan file drove the session, name it first** in "Key files" so the next agent reads it before anything else.
 5. **Terse and concrete** — paths, commands, shell IDs, decisions. Match the tone of a seasoned engineer handing off at end-of-shift.
 6. **Background process IDs are critical.** If you started any `run_in_background` shells, their IDs must appear in "Running state" with the kill command — the next agent cannot find them otherwise.
-7. **Copy exact strings, never reword them.** Error text, commands, config keys and values, and constraints the user stated go in backticks exactly as they appeared — these are what a summary drops first, and a paraphrased error cannot be searched for later.
+7. **Copy exact strings, never reword them.** Error text, commands, config keys and values, and constraints the user stated go in backticks exactly as they appeared — these are what a summary drops first, and a paraphrased error cannot be searched for later. For a long error, keep the one line that identifies it; `chapter-index output` has the rest.
    <!-- ponytail: "Tried and ruled out" is carried forward by the writer, not stored in a ledger. If it grows past ~10 entries, that is the signal to promote the list into a topic file, not to add a file now. -->
 
 ## Anti-patterns — do not do these

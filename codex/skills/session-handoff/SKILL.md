@@ -113,7 +113,7 @@ Use exactly this structure every time:
 5. Keep the tone terse and concrete: paths, commands, decisions, and current state. No emojis, hype, or retrospective.
 6. Include background-process details when any were started; otherwise write "none".
 7. Resuming is opt-in by the user's phrasing, not topic similarity. The memory index must not make unrelated work load a stale handoff.
-8. Copy exact strings, never reword them: error text, commands, config keys and values, and constraints the user stated, in backticks exactly as they appeared.
+8. Copy exact strings, never reword them: error text, commands, config keys and values, and constraints the user stated, in backticks exactly as they appeared. For a long error, keep the one line that identifies it.
 
 ## Anti-patterns
 
