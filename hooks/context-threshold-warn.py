@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """UserPromptSubmit hook: warn when total context tokens used exceed THRESHOLD_TOKENS.
 
-Fires at a fixed token count regardless of model context window. For 1M Opus
-this catches the soft quality cliff at ~120K; for smaller-window models,
-exceeding 120K means the user has chosen heavy-context work knowing the risk.
+Fires at a fixed token count regardless of model context window. Raised from
+120K because a fresh session now starts near 90K, which left ~30K of working
+room; 150K stays under idle compaction's 200K minimum, so this warning comes
+first. For smaller-window models, exceeding 150K means the user has chosen
+heavy-context work knowing the risk.
 Always exits 0 — never blocks.
 """
 
@@ -11,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-THRESHOLD_TOKENS = 120_000
+THRESHOLD_TOKENS = 150_000
 
 USAGE_KEYS = (
     "input_tokens",

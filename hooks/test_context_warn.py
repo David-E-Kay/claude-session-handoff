@@ -33,9 +33,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert r.returncode == 0 and r.stderr == "", r
     assert "[CONTEXT WARNING] Context is at 150k tokens" in r.stdout, r
 
-    # Below threshold: silent.
-    r = run(home, 10_000)
-    assert r.returncode == 0 and r.stdout == "" and r.stderr == "", r
+    # Below threshold: silent, right up to the line.
+    for tokens in (10_000, 149_999):
+        r = run(home, tokens)
+        assert r.returncode == 0 and r.stdout == "" and r.stderr == "", (tokens, r)
 
     # The prompt is never written to disk.
     assert list(hooks_dir.iterdir()) == [], list(hooks_dir.iterdir())

@@ -23,9 +23,10 @@ def run(tool_name, transcript_path):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    big, small = Path(tmp) / "big.jsonl", Path(tmp) / "small.jsonl"
+    big, small, edge = Path(tmp) / "big.jsonl", Path(tmp) / "small.jsonl", Path(tmp) / "edge.jsonl"
     transcript(big, 150_000)
     transcript(small, 10_000)
+    transcript(edge, 149_999)
 
     # The subagent tool is called "Agent" now; older Claude Code called it "Task". Both must warn.
     for name in ("Agent", "Task"):
@@ -35,8 +36,9 @@ with tempfile.TemporaryDirectory() as tmp:
         assert out["hookEventName"] == "PreToolUse", out
         assert "150k tokens" in out["additionalContext"], out
 
-    # Below the threshold: silent.
-    r = run("Agent", small)
-    assert r.returncode == 0 and r.stdout == "", r
+    # Below the threshold: silent, right up to the line.
+    for path in (small, edge):
+        r = run("Agent", path)
+        assert r.returncode == 0 and r.stdout == "", (path.name, r)
 
 print("ok")

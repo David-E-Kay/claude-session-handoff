@@ -9,7 +9,7 @@ This plugin turns that into two phrases:
 1. Near the end of a session, say **"session handoff"**. Claude writes a short, structured summary of the session, and the plugin saves it to the project's memory. You'll see `Handoff saved to …`.
 2. In a fresh session, say **"resume from before"** (or type `/resume-work`). Claude reads the summary, opens the files it names, and tells you where you left off.
 
-It also reminds you when a session reaches 120k tokens, so you hand off before quality drops. And it keeps a local record of every session (the *chapter index*), so when you later ask "what did we decide about the database last week?", Claude can find the answer even if no summary mentioned it.
+It also reminds you when a session reaches 150k tokens, so you hand off before quality drops. And it keeps a local record of every session (the *chapter index*), so when you later ask "what did we decide about the database last week?", Claude can find the answer even if no summary mentioned it.
 
 ## Install
 
@@ -49,7 +49,7 @@ Two phrases, one loop.
 
 **Ending a session** — say **"session handoff"** (or "wrap up session", "hand off"). Claude prints the handoff in chat and the `Stop` hook saves it to project memory; you'll see "Handoff saved to …". Then `/clear` or quit; nothing to copy.
 
-Run it whenever the next thing you'd do is `/clear`, `/compact`, or close the window — and whenever the context hook nudges you at 120k. Running it more than once per session is fine.
+Run it whenever the next thing you'd do is `/clear`, `/compact`, or close the window — and whenever the context hook nudges you at 150k. Running it more than once per session is fine.
 
 **Starting the next one** — say **"resume from before"** (or "resume", "pick up where we left off", "continue from last time", "catch me up", "where did we leave off", "load the last handoff"). The skill reads the newest stored handoff, opens the files it names, and tells you where to pick up. Or type **/resume-work**, which always loads the last handoff.
 
@@ -70,14 +70,14 @@ The plugin sends nothing anywhere. Everything it writes stays in your `~/.claude
 - **`skills/session-handoff/SKILL.md`** — writes handoffs, reads them back when you ask to resume, and looks up earlier work in the chapter index when the handoff doesn't have the answer.
 - **`skills/resume-work/SKILL.md`** — the `/resume-work` shortcut.
 - **`hooks/handoff-save.py`** — a `Stop` hook (it runs when Claude finishes a reply) that saves the handoff to project memory. Claude prints the handoff once in chat and the hook does the saving, so a handoff costs one reply instead of four or five.
-- **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that nudges you to hand off once the session passes 120k tokens.
+- **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that nudges you to hand off once the session passes 150k tokens.
 - **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook that catches the same threshold between subagent tasks, where no prompt of yours would trigger the hook above.
 - **`hooks/chapters.py`** — a `Stop` hook that records each session into the chapter index, plus the lookup commands. See [The chapter index](#the-chapter-index).
 - **`bin/chapter-index`** — the short command Claude runs for lookups, so one allow rule covers them.
 
 ## Notes
 
-- The 120,000-token reminder is a fixed cutoff. It doesn't adjust to your model's context window, and there is no setting to change it yet. Editing the number in the installed scripts won't last: a plugin update replaces them.
+- The 150,000-token reminder is a fixed cutoff. It doesn't adjust to your model's context window, and there is no setting to change it yet. Editing the number in the installed scripts won't last: a plugin update replaces them.
 - Running the skill twice in a session is safe: it writes a new dated handoff file and repoints the single index line at it.
 
 ## How handoffs persist across sessions

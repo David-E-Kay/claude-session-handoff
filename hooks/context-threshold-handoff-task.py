@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-THRESHOLD_TOKENS = 120_000
+THRESHOLD_TOKENS = 150_000
 
 USAGE_KEYS = (
     "input_tokens",
