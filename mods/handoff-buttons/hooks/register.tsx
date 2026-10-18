@@ -37,7 +37,7 @@ let webhook = '' // the discordWebhook option; a change in settings reloads the 
 
 type Engine = Parameters<Hook<'turn.complete'>>[0]
 
-// Same rule as the Multi Agent Dashboard's cache_window(): the newest main-loop entry that wrote cache decides.
+// The newest main-loop entry that wrote cache decides.
 // ponytail: $.fs.read refuses files over 4 MiB, which then fall back to the hour; none in two weeks was that big
 async function readCacheMs($: Engine) {
   const path = await read($, transcriptPath)
