@@ -57,11 +57,11 @@ What it adds, above the prompt:
 - **A Session handoff button** from 150k tokens, which replaces the written reminder in chat. Once the handoff is written, a **Clear** button runs `/clear`. After a clear, a **Resume** button loads the handoff.
 - **A 10-minute alarm** when the cache is about to expire and the session is over 100k tokens: a pop-up, and a Windows notification card on Windows.
 
-**Phone alerts through Discord** (optional). With the screen off, Windows files the notification card silently, so the alarm can also post to a Discord channel. Create a webhook in the channel's settings (Integrations → Webhooks), then add it to `~/.claude/settings.json`:
+**Phone alerts through Discord** (optional). With the screen off, Windows files the notification card silently, so the alarm can also post to a Discord channel. The post names the session and, when Remote Control is on for it, links to it (`https://claude.ai/code/session_...`), which the Claude phone app can open. Create a webhook in the channel's settings (Integrations → Webhooks), then paste its link when you run `/plugin configure handoff-buttons@session-handoff` in Claude Code. Or add it to `~/.claude/settings.json` yourself, under the plugin's full name:
 
 ```json
 "pluginConfigs": {
-  "handoff-buttons": {
+  "handoff-buttons@session-handoff": {
     "options": { "discordWebhook": "https://discord.com/api/webhooks/..." }
   }
 },
@@ -91,7 +91,7 @@ The plugin sends nothing anywhere. Everything it writes stays in your `~/.claude
 
 - **Handoffs** go to Claude Code's own per-project memory folder, `~/.claude/projects/<repo>/memory/`, as `handoff-<date>.md` files. Claude Code loads that folder's `MEMORY.md` index at the start of each session in that repo, as it always does.
 - **The chapter index** is one file, `~/.claude/chapter-index.db`. It holds a plain-text copy of your prompts, Claude's replies, and a list of the actions Claude took, but not the actions' output. Treat it like Claude Code's own transcripts, which hold the same material and more. Delete the file to wipe it.
-- **The optional Discord alert** (in the `handoff-buttons` mod) is the one exception: if you set a webhook, the alarm's one-line message is posted to it.
+- **The optional Discord alert** (in the `handoff-buttons` mod) is the one exception: if you set a webhook, the alarm's message is posted to it, with the session's name and, when Remote Control is on, its link.
 - **Optional summaries** use [Ollama](https://ollama.com), a program that runs AI models on your own computer. They're off unless you turn them on (see below). If you point `CHAPTER_OLLAMA_URL` at another computer, chapter text is sent there.
 
 ## What's inside
