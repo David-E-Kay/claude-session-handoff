@@ -5,8 +5,9 @@ The session-handoff skill has the model print the handoff once, in chat, startin
 with a `<!-- handoff-memory-dir: <path> -->` marker. This hook sees the finished
 reply, writes it to `<path>/handoff-<YYYY-MM-DD-HHMM>.md` with memory frontmatter,
 and repoints the single handoff line in `<path>/MEMORY.md`. Timestamp comes from
-the real clock. It also records the git commit the working folder is on, so a
-resumed session can tell whether the code has moved since. Replies without the
+the real clock. It also records the git commit and top folder the working folder
+is on, and whether tracked files had uncommitted edits, so a resumed session can
+tell whether the code has moved since. Replies without the
 marker on their first line are ignored. Always exits 0 — never blocks.
 """
 
@@ -47,20 +48,28 @@ def section(body: str, heading: str) -> str:
     return " ".join(m.group(1).split()) if m else ""
 
 
-# ponytail: the commit only, no per-file coverage, and untracked files at resume go
-# unnoticed. Track files only if a stale result is seen slipping past this check.
-def head_commit(cwd):
+# ponytail: commit, folder and a dirty flag only, no per-file coverage, and untracked
+# files go unnoticed. Track files only if a stale result is seen slipping past this check.
+def git_state(cwd):
+    """Frontmatter lines for the folder's commit, its top folder, and uncommitted edits."""
     if not cwd:
-        return None
+        return ""
+    def git(*args):
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
+                              timeout=5, stdin=subprocess.DEVNULL)
     try:
-        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--verify", "-q", "HEAD"],
-                           capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
-    except Exception:  # git missing, hung, or cwd unusable: save without a commit
-        return None
-    return r.stdout.strip() or None if r.returncode == 0 else None
+        r = git("rev-parse", "--show-toplevel", "HEAD")
+        lines = r.stdout.splitlines()  # not split(): folder names can hold spaces
+        if r.returncode != 0 or len(lines) != 2:
+            return ""
+        dirty = git("status", "--porcelain", "--untracked-files=no").stdout.strip()
+    except Exception:  # git missing, hung, or cwd unusable: save without git lines
+        return ""
+    top, commit = lines
+    return f"  commit: {commit}\n  folder: {top}\n" + ("  dirty: true\n" if dirty else "")
 
 
-def save(text: str, commit=None):
+def save(text: str, git_lines=""):
     m = MARKER.match(text)
     if not m:
         return None
@@ -79,7 +88,7 @@ def save(text: str, commit=None):
     mem_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"---\nname: {stem}\ndescription: Session handoff — {title}\nmetadata:\n  type: project\n"
-        + (f"  commit: {commit}\n" if commit else "") + f"---\n\n{body}",
+        + git_lines + f"---\n\n{body}",
         encoding="utf-8",
     )
 
@@ -110,7 +119,7 @@ def main():
     if not isinstance(text, str) or not MARKER.match(text):
         return
     try:
-        path = save(text, head_commit(payload.get("cwd")))
+        path = save(text, git_state(payload.get("cwd")))
         msg = f"Handoff saved to {path}"
     except Exception as e:
         msg = f"Handoff NOT saved ({e}). Ask Claude to write it to memory manually."

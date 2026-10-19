@@ -117,9 +117,30 @@ with tempfile.TemporaryDirectory() as tmp:
     git("update-ref", "HEAD", sha, cwd=repo)
     mem4 = tmp / "commit"
     mem4.mkdir()
+    top = git("rev-parse", "--show-toplevel", cwd=repo)
     run({"hook_event_name": "Stop", "cwd": str(repo), "last_assistant_message": handoff(mem4)})
     saved = handoffs(mem4)[0].read_text(encoding="utf-8")
-    assert f"metadata:\n  type: project\n  commit: {sha}\n---\n" in saved, saved
+    assert f"metadata:\n  type: project\n  commit: {sha}\n  folder: {top}\n---\n" in saved, saved
+
+    # 7b. Uncommitted edits to tracked files: flagged, since the commit is not what was tested.
+    (repo / "f.txt").write_text("v1", encoding="utf-8")
+    git("add", "f.txt", cwd=repo)
+    sha = git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", git("write-tree", cwd=repo), "-m", "f", cwd=repo)
+    git("update-ref", "HEAD", sha, cwd=repo)
+    (repo / "f.txt").write_text("v2", encoding="utf-8")
+    (repo / "untracked.txt").write_text("x", encoding="utf-8")
+    mem5 = tmp / "dirty"
+    mem5.mkdir()
+    run({"hook_event_name": "Stop", "cwd": str(repo), "last_assistant_message": handoff(mem5)})
+    saved = handoffs(mem5)[0].read_text(encoding="utf-8")
+    assert f"  commit: {sha}\n  folder: {top}\n  dirty: true\n---\n" in saved, saved
+    # Untracked files alone do not count as dirty.
+    (repo / "f.txt").write_text("v1", encoding="utf-8")
+    mem6 = tmp / "clean"
+    mem6.mkdir()
+    run({"hook_event_name": "Stop", "cwd": str(repo), "last_assistant_message": handoff(mem6)})
+    saved = handoffs(mem6)[0].read_text(encoding="utf-8")
+    assert f"  folder: {top}\n---\n" in saved and "dirty" not in saved, saved
 
     # 8. No usable commit: saved anyway, frontmatter unchanged.
     empty_repo = tmp / "empty-repo"
@@ -138,7 +159,7 @@ with tempfile.TemporaryDirectory() as tmp:
             capture_output=True, text=True, encoding="utf-8", timeout=30, env=env)
         assert r.returncode == 0 and "saved" in r.stdout, (cwd, r.stdout, r.stderr)
         saved = handoffs(m)[0].read_text(encoding="utf-8")
-        assert "commit:" not in saved and "metadata:\n  type: project\n---\n" in saved, (cwd, saved)
+        assert "commit:" not in saved and "folder:" not in saved and "metadata:\n  type: project\n---\n" in saved, (cwd, saved)
     # Cases 1-6 sent no cwd at all.
     assert all("commit:" not in f.read_text(encoding="utf-8") for f in handoffs(mem)), "no cwd must mean no commit"
 

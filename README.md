@@ -98,7 +98,7 @@ The plugin sends nothing anywhere. Everything it writes stays in your `~/.claude
 
 - **`skills/session-handoff/SKILL.md`** — writes handoffs, reads them back when you ask to resume, and looks up earlier work in the chapter index when the handoff doesn't have the answer.
 - **`skills/resume-work/SKILL.md`** — the `/resume-work` shortcut.
-- **`hooks/handoff-save.py`** — a `Stop` hook (it runs when Claude finishes a reply) that saves the handoff to project memory. Claude prints the handoff once in chat and the hook does the saving, so a handoff costs one reply instead of four or five. It also notes the git commit you were on, so when you resume, Claude can see whether the code has changed since and rerun the handoff's checks before trusting them.
+- **`hooks/handoff-save.py`** — a `Stop` hook (it runs when Claude finishes a reply) that saves the handoff to project memory. Claude prints the handoff once in chat and the hook does the saving, so a handoff costs one reply instead of four or five. It also notes the git commit and folder you were on, and whether you had unsaved edits, so when you resume, Claude can see whether the code has changed since and rerun the handoff's checks before trusting them.
 - **`hooks/context-threshold-warn.py`** — a `UserPromptSubmit` hook that nudges you to hand off once the session passes 150k tokens.
 - **`hooks/context-threshold-handoff-task.py`** — a `PreToolUse` hook that catches the same threshold between subagent tasks, where no prompt of yours would trigger the hook above.
 - **`hooks/chapters.py`** — a `Stop` hook that records each session into the chapter index, plus the lookup commands. See [The chapter index](#the-chapter-index).
