@@ -1,6 +1,7 @@
 """Self-check for handoff-save.py. Run: python hooks/test_handoff_save.py"""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -102,5 +103,43 @@ with tempfile.TemporaryDirectory() as tmp:
     assert f"- {exact}\n" in saved and "(2026-10-10)" in saved, saved
     pointer = (mem3 / "MEMORY.md").read_text(encoding="utf-8")
     assert pointer.endswith("Pick up here: Fix the path.\n") and "ENOENT" not in pointer, pointer
+
+    # 7. The commit the working folder is on goes into the frontmatter.
+    def git(*args, cwd):
+        return subprocess.run(["git", *args], cwd=cwd, input="", capture_output=True, text=True, check=True).stdout.strip()
+
+    repo = tmp / "repo"
+    repo.mkdir()
+    git("init", "-q", cwd=repo)
+    # commit-tree, not commit: a global hooks path on the maintainer's machine must not run here.
+    tree = git("mktree", cwd=repo)  # empty input -> empty tree
+    sha = git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", tree, "-m", "init", cwd=repo)
+    git("update-ref", "HEAD", sha, cwd=repo)
+    mem4 = tmp / "commit"
+    mem4.mkdir()
+    run({"hook_event_name": "Stop", "cwd": str(repo), "last_assistant_message": handoff(mem4)})
+    saved = handoffs(mem4)[0].read_text(encoding="utf-8")
+    assert f"metadata:\n  type: project\n  commit: {sha}\n---\n" in saved, saved
+
+    # 8. No usable commit: saved anyway, frontmatter unchanged.
+    empty_repo = tmp / "empty-repo"
+    empty_repo.mkdir()
+    git("init", "-q", cwd=empty_repo)
+    for i, (cwd, env) in enumerate([
+        (str(tmp), None),                                       # not a repo
+        (str(empty_repo), None),                                # repo with no commits
+        (str(tmp / "missing"), None),                           # folder does not exist
+        (str(repo), {**os.environ, "PATH": ""}),                # git not on PATH
+    ]):
+        m = tmp / f"nocommit{i}"
+        m.mkdir()
+        r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(
+            {"hook_event_name": "Stop", "cwd": cwd, "last_assistant_message": handoff(m)}),
+            capture_output=True, text=True, encoding="utf-8", timeout=30, env=env)
+        assert r.returncode == 0 and "saved" in r.stdout, (cwd, r.stdout, r.stderr)
+        saved = handoffs(m)[0].read_text(encoding="utf-8")
+        assert "commit:" not in saved and "metadata:\n  type: project\n---\n" in saved, (cwd, saved)
+    # Cases 1-6 sent no cwd at all.
+    assert all("commit:" not in f.read_text(encoding="utf-8") for f in handoffs(mem)), "no cwd must mean no commit"
 
 print("ok")

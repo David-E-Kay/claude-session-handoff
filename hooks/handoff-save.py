@@ -5,12 +5,14 @@ The session-handoff skill has the model print the handoff once, in chat, startin
 with a `<!-- handoff-memory-dir: <path> -->` marker. This hook sees the finished
 reply, writes it to `<path>/handoff-<YYYY-MM-DD-HHMM>.md` with memory frontmatter,
 and repoints the single handoff line in `<path>/MEMORY.md`. Timestamp comes from
-the real clock. Replies without the marker on their first line are ignored.
-Always exits 0 — never blocks.
+the real clock. It also records the git commit the working folder is on, so a
+resumed session can tell whether the code has moved since. Replies without the
+marker on their first line are ignored. Always exits 0 — never blocks.
 """
 
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +47,20 @@ def section(body: str, heading: str) -> str:
     return " ".join(m.group(1).split()) if m else ""
 
 
-def save(text: str):
+# ponytail: the commit only, no per-file coverage, and untracked files at resume go
+# unnoticed. Track files only if a stale result is seen slipping past this check.
+def head_commit(cwd):
+    if not cwd:
+        return None
+    try:
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--verify", "-q", "HEAD"],
+                           capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+    except Exception:  # git missing, hung, or cwd unusable: save without a commit
+        return None
+    return r.stdout.strip() or None if r.returncode == 0 else None
+
+
+def save(text: str, commit=None):
     m = MARKER.match(text)
     if not m:
         return None
@@ -63,7 +78,8 @@ def save(text: str):
     path = mem_dir / f"{stem}.md"
     mem_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        f"---\nname: {stem}\ndescription: Session handoff — {title}\nmetadata:\n  type: project\n---\n\n{body}",
+        f"---\nname: {stem}\ndescription: Session handoff — {title}\nmetadata:\n  type: project\n"
+        + (f"  commit: {commit}\n" if commit else "") + f"---\n\n{body}",
         encoding="utf-8",
     )
 
@@ -94,7 +110,7 @@ def main():
     if not isinstance(text, str) or not MARKER.match(text):
         return
     try:
-        path = save(text)
+        path = save(text, head_commit(payload.get("cwd")))
         msg = f"Handoff saved to {path}"
     except Exception as e:
         msg = f"Handoff NOT saved ({e}). Ask Claude to write it to memory manually."
