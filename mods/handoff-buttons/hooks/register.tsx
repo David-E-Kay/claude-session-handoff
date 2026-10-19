@@ -60,6 +60,30 @@ async function readCacheMs($: Engine) {
   return HOUR_MS
 }
 
+// The Discord text: the session's newest name, and its Remote Control link, which the phone app opens. Either is left out when the transcript has none.
+// The link's id is the Remote Control record's, `cse_` swapped for `session_`.
+async function discordText($: Engine) {
+  const path = await read($, transcriptPath)
+  const text = path ? await $.fs.read(path).catch(() => '') : ''
+  let title = ''
+  let link = ''
+  for (const line of text.split('\n')) {
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (entry.type === 'custom-title' && entry.customTitle) {
+      title = entry.customTitle
+    }
+    if (entry.type === 'bridge-session' && entry.bridgeSessionId) {
+      link = `\n<https://claude.ai/code/${String(entry.bridgeSessionId).replace(/^cse_/, 'session_')}>` // <> stops Discord's preview card
+    }
+  }
+  return `${title ? `**${title}**: ` : ''}${ALARM}${link}`
+}
+
 // From the time the cache was last read: the alarm at 10 minutes left (none if that has passed), and the redraw tick.
 // A 5-minute window is all inside the last 10 minutes, so it never sets one: the alarm would come with every reply.
 async function startCacheClock($: Engine, repliedAt: number) {
@@ -77,7 +101,7 @@ async function startCacheClock($: Engine, repliedAt: number) {
     }
     // A phone push for when the screen is off: standby files the Windows card silently. Reaches Discord only while the PC stays online.
     if (webhook) {
-      await $.http.fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: ALARM }) }).catch(() => undefined)
+      await $.http.fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: await discordText($) }) }).catch(() => undefined)
     }
   })
   // Redraw while idle so the minutes left keep moving.

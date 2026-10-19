@@ -403,6 +403,31 @@ test('reopened on a 5-minute cache: the line uses it at once', async ($, on) => 
   expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ type: 'Text', text: /cache expires in 3m/ })).toBeDefined()
 })
 
+// The Discord post names the session and links it for the phone app, from the newest title and Remote Control records.
+const titled = (customTitle: string) => JSON.stringify({ type: 'custom-title', customTitle })
+const bridged = (bridgeSessionId: string) => JSON.stringify({ type: 'bridge-session', bridgeSessionId })
+
+test('the Discord post carries the session name and its phone link', { options: { discordWebhook: 'https://discord.test/hook' } }, async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const sent = engine(on, 105_000)
+  transcript(on, () => [titled('Old name'), bridged('cse_OLD'), cached(0, 900), titled('Fix the parser'), bridged('cse_01ABC')])
+  await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+  await $.turn.complete(reply())
+  await clock.advance(50 * MIN)
+  expect(JSON.parse(sent.posts[0].init.body)).toEqual({ content: `**Fix the parser**: ${ALARM}\n<https://claude.ai/code/session_01ABC>` })
+  expect(sent.toasts).toEqual([ALARM]) // the pop-up on the PC stays as it was
+})
+
+test('no Remote Control record: the Discord post has the name and no link', { options: { discordWebhook: 'https://discord.test/hook' } }, async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const sent = engine(on, 105_000)
+  transcript(on, () => [cached(0, 900), titled('Fix the parser')])
+  await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+  await $.turn.complete(reply())
+  await clock.advance(50 * MIN)
+  expect(JSON.parse(sent.posts[0].init.body)).toEqual({ content: `**Fix the parser**: ${ALARM}` })
+})
+
 test('an unreadable transcript falls back to the hour', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   const sent = engine(on, 105_000)
