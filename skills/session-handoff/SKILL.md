@@ -35,7 +35,7 @@ This is a **context-handoff artifact**, not a status report. The audience is a f
 
 ## Where the handoff goes
 
-**One reply, no tool calls.** Print the handoff in chat, once, and stop. The plugin's `handoff-save.py` Stop hook runs when your reply finishes and saves it to project memory for you: it stamps the filename from the real clock, adds the memory frontmatter, writes `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`, and repoints the single handoff line in `MEMORY.md`. Do not write, edit, or `date` anything yourself — every tool call re-reads the whole conversation, and at handoff time that is 150k+ tokens per step.
+**One reply, no tool calls.** Print the handoff in chat, once, and stop. The plugin's `handoff-save.py` Stop hook runs when your reply finishes and saves it to project memory for you: it stamps the filename from the real clock, adds the memory frontmatter (including a `commit:` line with the working folder's git commit, when there is one), writes `<memory-dir>/handoff-<YYYY-MM-DD-HHMM>.md`, and repoints the single handoff line in `MEMORY.md`. Do not write, edit, or `date` anything yourself — every tool call re-reads the whole conversation, and at handoff time that is 150k+ tokens per step.
 
 The very first line of the reply must be this marker, with the project memory directory given in your system prompt (`.../projects/<repo-slug>/memory`) as an absolute path:
 
@@ -58,7 +58,8 @@ When the user asks to resume, do this before anything else — before answering,
 
 1. Read the newest `handoff-*.md` in this repo's memory directory. Get the path from the handoff line in `MEMORY.md`; if that line is missing, take the newest by mtime — `ls -t handoff-*.md | head -1` — not the last filename alphabetically. Any filename written before the clock rule above was adopted may carry a fabricated timestamp and sort wrong; mtime is correct regardless of what the name claims.
 2. Read whatever it names under "Key files for next session", including the plan file if there is one.
-3. Report the "Pick up here" line back to the user in one sentence, then proceed.
+3. If the handoff's frontmatter has a `commit:` line, run `git diff --stat <commit>` in the working folder. If it lists any files, the code has changed since the handoff was written: tell the user its Verification results may be stale, and rerun those commands before relying on anything they covered. If git reports the commit as unknown, say the staleness check could not be done. No `commit:` line means the handoff predates this check; skip it.
+4. Report the "Pick up here" line back to the user in one sentence, then proceed.
 
 If no `handoff-*.md` exists, say so plainly — do not reconstruct a summary from `git log` or the filesystem. There is nothing to resume from.
 
