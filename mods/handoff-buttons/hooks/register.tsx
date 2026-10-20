@@ -9,6 +9,7 @@ const COOLING_MS = 10 * 60_000 // the last stretch of the window, when a handoff
 const COOLING_HANDOFF_TOKENS = 100_000 // below this a fresh session saves little: one starts at ~75k
 const LIMIT_LABEL: Record<string, string> = { five_hour: '5h', seven_day: 'week' }
 const ALARM = 'Cache expires in 10m. Hand off now to resume cheaply later.'
+const HANDOFF_MARKER = /^\s*<!--\s*handoff-memory-dir:/ // the first line of a handoff reply, which session-handoff's handoff-save.py saves
 // The desktop app has no notification channel for $.ui.notify, so Windows raises the card itself.
 // ponytail: Windows only; a Mac would want osascript here
 const WINDOWS_CARD = [
@@ -60,6 +61,26 @@ async function readCacheMs($: Engine) {
   return HOUR_MS
 }
 
+// Whether a main-loop reply in this session's transcript is a handoff, however it was asked for: the button, /session-handoff, or plain words.
+// A /clear starts a new transcript, so the next session starts without one. An unreadable transcript counts as none.
+async function hasHandoff($: Engine) {
+  const path = await read($, transcriptPath)
+  const text = path ? await $.fs.read(path).catch(() => '') : ''
+  for (const line of text.split('\n')) {
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const content = entry.type === 'assistant' && !entry.isSidechain ? entry.message?.content : undefined
+    if (Array.isArray(content) && content.some(b => b?.type === 'text' && HANDOFF_MARKER.test(String(b.text ?? '')))) {
+      return true
+    }
+  }
+  return false
+}
+
 // The Discord text: the session's newest name, and its Remote Control link, which the phone app opens. Either is left out when the transcript has none.
 // The link's id is the Remote Control record's, `cse_` swapped for `session_`.
 async function discordText($: Engine) {
@@ -90,8 +111,8 @@ async function startCacheClock($: Engine, repliedAt: number) {
   alarm?.cancel()
   const wait = repliedAt + await read($, cacheMs) - COOLING_MS - await $.clock.now()
   alarm = wait <= 0 ? undefined : $.clock.after(wait, async () => {
-    // Same bar as the cooling handoff button, and not once the handoff is written.
-    if (((await $.session.usage()).context.tokens ?? 0) < COOLING_HANDOFF_TOKENS || await read($, handoffStep) !== '') {
+    // Same bar as the cooling handoff button, and not once this session has a handoff, even with work since.
+    if (((await $.session.usage()).context.tokens ?? 0) < COOLING_HANDOFF_TOKENS || await read($, handoffStep) !== '' || await hasHandoff($)) {
       return
     }
     $.ui.toast(ALARM, { timeoutMs: 60_000 }) // the longest a toast may stay; the red line and the Windows card outlast it

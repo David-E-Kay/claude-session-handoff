@@ -403,6 +403,59 @@ test('reopened on a 5-minute cache: the line uses it at once', async ($, on) => 
   expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ type: 'Text', text: /cache expires in 3m/ })).toBeDefined()
 })
 
+// A handoff reply in the transcript, as session-handoff prints it: the memory-dir marker first.
+const handedOff = (isSidechain = false) => JSON.stringify({
+  type: 'assistant', isSidechain, message: { content: [{ type: 'text', text: '<!-- handoff-memory-dir: C:/memory -->\n# Session Handoff — Fix the parser' }] },
+})
+
+test('no alarm after a handoff asked for in words, not the button', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const sent = engine(on, 160_000)
+  transcript(on, () => [cached(0, 900), handedOff()])
+  await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+  await $.turn.complete(reply())
+  await clock.advance(50 * MIN)
+  expect(sent.toasts).toEqual([])
+  expect(sent.runs).toEqual([])
+})
+
+test('no alarm, Discord included, when work goes on after a handoff', { options: { discordWebhook: 'https://discord.test/hook' } }, async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const sent = engine(on, 160_000)
+  transcript(on, () => [cached(0, 900), handedOff(), cached(0, 900)])
+  await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+  await $.turn.complete(reply())
+  await (await $.ui.mount({ ...BAND, surface: 'terminal' })).press({ key: 'handoff' })
+  await $.turn.complete(reply())
+  await $.prompt.submit({ text: 'one more thing' })
+  await $.turn.complete(reply())
+  await clock.advance(50 * MIN)
+  expect(sent.toasts).toEqual([])
+  expect(sent.posts).toEqual([])
+})
+
+test('a subagent quoting the marker is not a handoff', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const sent = engine(on, 160_000)
+  transcript(on, () => [cached(0, 900), handedOff(true)])
+  await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+  await $.turn.complete(reply())
+  await clock.advance(50 * MIN)
+  expect(sent.toasts).toEqual([ALARM])
+})
+
+test('after /clear the new session alarms again', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const sent = engine(on, 160_000)
+  transcript(on, () => [cached(0, 900), handedOff()])
+  await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+  await $.classic.SessionStart({ source: 'clear', transcript_path: 'New.jsonl' })
+  await $.prompt.submit({ text: 'hi' })
+  await $.turn.complete(reply())
+  await clock.advance(50 * MIN)
+  expect(sent.toasts).toEqual([ALARM])
+})
+
 // The Discord post names the session and links it for the phone app, from the newest title and Remote Control records.
 const titled = (customTitle: string) => JSON.stringify({ type: 'custom-title', customTitle })
 const bridged = (bridgeSessionId: string) => JSON.stringify({ type: 'bridge-session', bridgeSessionId })
