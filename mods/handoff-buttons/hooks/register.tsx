@@ -81,6 +81,26 @@ async function hasHandoff($: Engine) {
   return false
 }
 
+// Whether the main loop's newest reply with text is a handoff: that turn wrote one, so Clear is safe, as after the button.
+async function lastReplyIsHandoff($: Engine) {
+  const path = await read($, transcriptPath)
+  const text = path ? await $.fs.read(path).catch(() => '') : ''
+  for (const line of text.split('\n').reverse()) {
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const content = entry.type === 'assistant' && !entry.isSidechain ? entry.message?.content : undefined
+    const texts = Array.isArray(content) ? content.filter(b => b?.type === 'text') : []
+    if (texts.length) {
+      return texts.some(b => HANDOFF_MARKER.test(String(b.text ?? '')))
+    }
+  }
+  return false
+}
+
 // The Discord text: the session's newest name, and its Remote Control link, which the phone app opens. Either is left out when the transcript has none.
 // The link's id is the Remote Control record's, `cse_` swapped for `session_`.
 async function discordText($: Engine) {
@@ -167,7 +187,8 @@ export const register: Register = (on, options) => {
       const ttl = await readCacheMs($)
       await update($, lastReplyAt, () => now)
       await update($, cacheMs, () => ttl)
-      await update($, handoffStep, h => h === 'asked' ? 'done' : h)
+      const handedOff = await lastReplyIsHandoff($) // /session-handoff or plain words, not only the button
+      await update($, handoffStep, h => h === 'asked' || handedOff ? 'done' : h)
       await startCacheClock($, now)
     }
     return r

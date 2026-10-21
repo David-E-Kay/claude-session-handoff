@@ -422,12 +422,15 @@ test('no alarm after a handoff asked for in words, not the button', async ($, on
 test('no alarm, Discord included, when work goes on after a handoff', { options: { discordWebhook: 'https://discord.test/hook' } }, async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   const sent = engine(on, 160_000)
-  transcript(on, () => [cached(0, 900), handedOff(), cached(0, 900)])
+  const lines = [cached(0, 900)]
+  transcript(on, () => lines)
   await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
   await $.turn.complete(reply())
   await (await $.ui.mount({ ...BAND, surface: 'terminal' })).press({ key: 'handoff' })
+  lines.push(handedOff())
   await $.turn.complete(reply())
   await $.prompt.submit({ text: 'one more thing' })
+  lines.push(said('Done.'), cached(0, 900))
   await $.turn.complete(reply())
   await clock.advance(50 * MIN)
   expect(sent.toasts).toEqual([])
@@ -443,6 +446,46 @@ test('a subagent quoting the marker is not a handoff', async ($, on) => {
   await clock.advance(50 * MIN)
   expect(sent.toasts).toEqual([ALARM])
 })
+
+// An ordinary main-loop reply with text, for work after a handoff.
+const said = (text: string) => JSON.stringify({ type: 'assistant', isSidechain: false, message: { content: [{ type: 'text', text }] } })
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: a handoff asked for without the button brings up clear`, async ($, on) => {
+    mock.clock(on, { now: 1_000_000 })
+    const sent = engine(on, 160_000)
+    transcript(on, () => [said('Stopping at a natural break.'), handedOff()])
+    await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+    await $.prompt.submit({ text: '/session-handoff' })
+    await $.turn.complete(reply())
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ key: 'handoff' })).toBeUndefined()
+    await ui.press({ key: 'clear' })
+    expect(sent.commands).toEqual(['clear'])
+  })
+
+  test(`${surface}: a reply after a handoff does not bring clear back`, async ($, on) => {
+    mock.clock(on, { now: 1_000_000 })
+    engine(on, 160_000)
+    transcript(on, () => [handedOff(), said('Done, the parser is fixed.')])
+    await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+    await $.prompt.submit({ text: 'one more thing' })
+    await $.turn.complete(reply())
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ key: 'clear' })).toBeUndefined()
+    expect(await ui.find({ key: 'handoff' })).toBeDefined()
+  })
+
+  test(`${surface}: a subagent quoting the marker does not bring up clear`, async ($, on) => {
+    mock.clock(on, { now: 1_000_000 })
+    engine(on, 160_000)
+    transcript(on, () => [said('Here is what I found.'), handedOff(true)])
+    await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+    await $.prompt.submit({ text: 'look into it' })
+    await $.turn.complete(reply())
+    expect(await (await $.ui.mount({ ...BAND, surface })).find({ key: 'clear' })).toBeUndefined()
+  })
+}
 
 test('after /clear the new session alarms again', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
