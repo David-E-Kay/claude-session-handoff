@@ -476,6 +476,26 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ key: 'handoff' })).toBeDefined()
   })
 
+  test(`${surface}: reopened after a handoff shows clear, not the handoff button`, async ($, on) => {
+    mock.clock(on, { now: 10_000_000 })
+    engine(on, 160_000)
+    transcript(on, () => [said('Stopping at a natural break.'), handedOff()])
+    await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl', seconds_since_last_response: 120 * 60 })
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ key: 'handoff' })).toBeUndefined()
+    expect(await ui.find({ key: 'clear' })).toBeDefined()
+  })
+
+  test(`${surface}: reopened with work after the handoff offers the handoff again`, async ($, on) => {
+    mock.clock(on, { now: 10_000_000 })
+    engine(on, 160_000)
+    transcript(on, () => [handedOff(), said('Done, the parser is fixed.')])
+    await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl', seconds_since_last_response: 120 * 60 })
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ key: 'clear' })).toBeUndefined()
+    expect(await ui.find({ key: 'handoff' })).toBeDefined()
+  })
+
   test(`${surface}: a subagent quoting the marker does not bring up clear`, async ($, on) => {
     mock.clock(on, { now: 1_000_000 })
     engine(on, 160_000)

@@ -163,6 +163,10 @@ export const register: Register = (on, options) => {
     await update($, transcriptPath, () => e.transcript_path)
     const ttl = await readCacheMs($)
     await update($, cacheMs, () => ttl)
+    // A reopened session forgets the button's step, so the transcript says whether its last reply was a handoff.
+    if (await lastReplyIsHandoff($)) {
+      await update($, handoffStep, () => 'done')
+    }
     // A reopened session is a new process that has seen no reply, but Claude Code says how long ago the last one was.
     if (e.seconds_since_last_response !== undefined) {
       const repliedAt = await $.clock.now() - e.seconds_since_last_response * 1000
