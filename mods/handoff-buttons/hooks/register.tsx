@@ -101,13 +101,32 @@ async function lastReplyIsHandoff($: Engine) {
   return false
 }
 
-// The Discord text: the session's newest name, and its Remote Control link, which the phone app opens. Either is left out when the transcript has none.
+// A session the phone started has its Remote Control id only in the desktop app's record of it, beside the app's copy of Claude Code.
+// ponytail: that record is the app's own bookkeeping; if an update moves it, phone-started posts lose their link again
+async function desktopBridgeId($: Engine) {
+  const exec = await $.env.get('CLAUDE_CODE_EXECPATH').catch(() => undefined)
+  const account = await $.env.get('CLAUDE_CODE_ACCOUNT_UUID').catch(() => undefined)
+  const org = await $.env.get('CLAUDE_CODE_ORGANIZATION_UUID').catch(() => undefined)
+  const host = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID').catch(() => undefined)
+  const root = exec?.split('\\claude-code\\')[0]
+  if (!root || root === exec || !account || !org || !host) {
+    return ''
+  }
+  const text = await $.fs.read(`${root}\\claude-code-sessions\\${account}\\${org}\\${host}.json`).catch(() => '')
+  try {
+    return String(JSON.parse(text).bridgeSessionIds?.at(-1) ?? '')
+  } catch {
+    return ''
+  }
+}
+
+// The Discord text: the session's newest name, and its Remote Control link, which the phone app opens. Either is left out when neither the transcript nor the desktop app has one.
 // The link's id is the Remote Control record's, `cse_` swapped for `session_`.
 async function discordText($: Engine) {
   const path = await read($, transcriptPath)
   const text = path ? await $.fs.read(path).catch(() => '') : ''
   let title = ''
-  let link = ''
+  let id = ''
   for (const line of text.split('\n')) {
     let entry
     try {
@@ -119,9 +138,11 @@ async function discordText($: Engine) {
       title = entry.customTitle
     }
     if (entry.type === 'bridge-session' && entry.bridgeSessionId) {
-      link = `\n<https://claude.ai/code/${String(entry.bridgeSessionId).replace(/^cse_/, 'session_')}>` // <> stops Discord's preview card
+      id = String(entry.bridgeSessionId)
     }
   }
+  id ||= await desktopBridgeId($)
+  const link = id ? `\n<https://claude.ai/code/${id.replace(/^cse_/, 'session_')}>` : '' // <> stops Discord's preview card
   return `${title ? `**${title}**: ` : ''}${ALARM}${link}`
 }
 

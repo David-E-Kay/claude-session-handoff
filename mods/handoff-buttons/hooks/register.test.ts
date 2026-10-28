@@ -544,6 +544,34 @@ test('no Remote Control record: the Discord post has the name and no link', { op
   expect(JSON.parse(sent.posts[0].init.body)).toEqual({ content: `**Fix the parser**: ${ALARM}` })
 })
 
+// A session started from the phone has no Remote Control record in its transcript; the desktop app's own record of it has the id.
+const DESKTOP_ENV: Record<string, string> = {
+  CLAUDE_CODE_EXECPATH: 'C:\\AppData\\Claude-Data\\claude_x\\claude-code\\2.1.308\\abc\\claude.exe',
+  CLAUDE_CODE_ACCOUNT_UUID: 'acct',
+  CLAUDE_CODE_ORGANIZATION_UUID: 'org',
+  CLAUDE_CODE_HOST_SESSION_ID: 'local_s1',
+}
+const DESKTOP_RECORD = 'C:\\AppData\\Claude-Data\\claude_x\\claude-code-sessions\\acct\\org\\local_s1.json'
+
+test('started from the phone: the Discord link comes from the desktop app\'s record', { options: { discordWebhook: 'https://discord.test/hook' } }, async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const sent = engine(on, 105_000)
+  on('env.get', (_$: any, e: any) => ({ value: DESKTOP_ENV[e.name] }))
+  on('fs.read', (_$: any, e: any) => {
+    if (e.path === DESKTOP_RECORD) {
+      return { value: JSON.stringify({ bridgeSessionIds: ['cse_OLD', 'cse_01PHONE'] }) }
+    }
+    if (e.path.endsWith('T.jsonl')) {
+      return { value: [cached(0, 900), titled('Fix the parser')].join('\n') + '\n' }
+    }
+    throw new Error('ENOENT')
+  })
+  await $.classic.SessionStart({ source: 'resume', transcript_path: 'T.jsonl' })
+  await $.turn.complete(reply())
+  await clock.advance(50 * MIN)
+  expect(JSON.parse(sent.posts[0].init.body)).toEqual({ content: `**Fix the parser**: ${ALARM}\n<https://claude.ai/code/session_01PHONE>` })
+})
+
 test('an unreadable transcript falls back to the hour', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   const sent = engine(on, 105_000)
