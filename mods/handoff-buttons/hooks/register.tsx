@@ -101,23 +101,28 @@ async function lastReplyIsHandoff($: Engine) {
   return false
 }
 
-// A session the phone started has its Remote Control id only in the desktop app's record of it, beside the app's copy of Claude Code.
+// A session the phone started has its Remote Control id only in the desktop app's record of it, under a claude_* folder in %LOCALAPPDATA%\Claude-Data.
+// CLAUDE_CODE_EXECPATH would name that folder, but Claude Code sets it only for the shells it starts, not in its own environment, where a mod runs.
 // ponytail: that record is the app's own bookkeeping; if an update moves it, phone-started posts lose their link again
 async function desktopBridgeId($: Engine) {
-  const exec = await $.env.get('CLAUDE_CODE_EXECPATH').catch(() => undefined)
+  const appData = await $.env.get('LOCALAPPDATA').catch(() => undefined)
   const account = await $.env.get('CLAUDE_CODE_ACCOUNT_UUID').catch(() => undefined)
   const org = await $.env.get('CLAUDE_CODE_ORGANIZATION_UUID').catch(() => undefined)
   const host = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID').catch(() => undefined)
-  const root = exec?.split('\\claude-code\\')[0]
-  if (!root || root === exec || !account || !org || !host) {
+  if (!appData || !account || !org || !host) {
     return ''
   }
-  const text = await $.fs.read(`${root}\\claude-code-sessions\\${account}\\${org}\\${host}.json`).catch(() => '')
-  try {
-    return String(JSON.parse(text).bridgeSessionIds?.at(-1) ?? '')
-  } catch {
-    return ''
+  const data = `${appData}\\Claude-Data`
+  for (const dir of await $.fs.list(data).catch(() => [])) {
+    if (dir.kind !== 'dir' || !dir.name.startsWith('claude_')) {
+      continue
+    }
+    const text = await $.fs.read(`${data}\\${dir.name}\\claude-code-sessions\\${account}\\${org}\\${host}.json`).catch(() => '')
+    try {
+      return String(JSON.parse(text).bridgeSessionIds?.at(-1) ?? '')
+    } catch {}
   }
+  return ''
 }
 
 // The Discord text: the session's newest name, and its Remote Control link, which the phone app opens. Either is left out when neither the transcript nor the desktop app has one.

@@ -545,8 +545,9 @@ test('no Remote Control record: the Discord post has the name and no link', { op
 })
 
 // A session started from the phone has no Remote Control record in its transcript; the desktop app's own record of it has the id.
+// The session's own environment, as a mod sees it: CLAUDE_CODE_EXECPATH is set only for the shells Claude Code starts, so it is not here.
 const DESKTOP_ENV: Record<string, string> = {
-  CLAUDE_CODE_EXECPATH: 'C:\\AppData\\Claude-Data\\claude_x\\claude-code\\2.1.308\\abc\\claude.exe',
+  LOCALAPPDATA: 'C:\\AppData',
   CLAUDE_CODE_ACCOUNT_UUID: 'acct',
   CLAUDE_CODE_ORGANIZATION_UUID: 'org',
   CLAUDE_CODE_HOST_SESSION_ID: 'local_s1',
@@ -557,6 +558,13 @@ test('started from the phone: the Discord link comes from the desktop app\'s rec
   const clock = mock.clock(on, { now: 1_000_000 })
   const sent = engine(on, 105_000)
   on('env.get', (_$: any, e: any) => ({ value: DESKTOP_ENV[e.name] }))
+  on('fs.list', (_$: any, e: any) => {
+    if (e.path !== 'C:\\AppData\\Claude-Data') {
+      throw new Error('ENOENT')
+    }
+    const entry = (name: string, kind: string) => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })
+    return { value: [entry('README.txt', 'file'), entry('claude_old', 'dir'), entry('claude_x', 'dir')] }
+  })
   on('fs.read', (_$: any, e: any) => {
     if (e.path === DESKTOP_RECORD) {
       return { value: JSON.stringify({ bridgeSessionIds: ['cse_OLD', 'cse_01PHONE'] }) }
